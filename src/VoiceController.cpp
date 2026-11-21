@@ -8,6 +8,13 @@ inline void logLine(const char* prefix, const char* msg) {
     Serial.printf("%s %s\n", prefix, msg ? msg : "");
 }
 
+// Calcule le temps ecoule sans jamais provoquer de depassement negatif (underflow uint32_t)
+// si millis() a avance entre le debut de loop() et un appel setState() interne.
+inline uint32_t safeElapsedMs(uint32_t nowMs, uint32_t startMs) {
+    const int32_t diff = static_cast<int32_t>(nowMs - startMs);
+    return (diff > 0) ? static_cast<uint32_t>(diff) : 0u;
+}
+
 } // namespace
 
 VoiceController::VoiceController(IVoiceEngine& engine,
@@ -26,6 +33,7 @@ void VoiceController::attachCallbacks() {
         logLine("[VJ][VOICE]", "READY");
         // Une reconnexion ne doit JAMAIS redeclencher une ancienne commande, transcription ou TTS
         invalidateCurrentTurn();
+        cancelPendingAiPrompt();
         router_.cancelClearConfirmation();
         view_.clearConfirmPending = false;
         aiRequestActive_ = false;
@@ -45,6 +53,7 @@ void VoiceController::attachCallbacks() {
     engine_.onError([this](const String& err) {
         Serial.printf("[VJ][ERROR] VoiceKit: %s\n", err.c_str());
         invalidateCurrentTurn();
+        cancelPendingAiPrompt();
         aiRequestActive_ = false;
         ttsPlaybackActive_ = false;
         ttsQueue_.clear();
@@ -67,6 +76,7 @@ void VoiceController::attachCallbacks() {
             case VoiceEngineState::DISCONNECTED:
                 view_.connected = false;
                 invalidateCurrentTurn();
+                cancelPendingAiPrompt();
                 router_.cancelClearConfirmation();
                 view_.clearConfirmPending = false;
                 aiRequestActive_ = false;
@@ -84,7 +94,7 @@ void VoiceController::attachCallbacks() {
                         state_ == JournalState::DISCONNECTED ||
                         state_ == JournalState::STOPPING ||
                         state_ == JournalState::SPEAKING ||
-                        state_ == JournalState::ANALYZING) {
+                        (state_ == JournalState::ANALYZING && !hasPendingAiPrompt_)) {
                         aiRequestActive_ = false;
                         ttsPlaybackActive_ = false;
                         setState(JournalState::READY);
@@ -105,6 +115,7 @@ void VoiceController::attachCallbacks() {
 
             case VoiceEngineState::ERROR_STATE:
                 invalidateCurrentTurn();
+                cancelPendingAiPrompt();
                 aiRequestActive_ = false;
                 ttsPlaybackActive_ = false;
                 ttsQueue_.clear();
@@ -331,6 +342,7 @@ bool VoiceController::onTalkButtonPressed(uint32_t nowMs) {
 
 bool VoiceController::startListeningSession(uint32_t nowMs) {
     // Toute nouvelle capture invalide toute attente de reponse IA ou TTS anterieure
+    cancelPendingAiPrompt();
     aiRequestActive_ = false;
     ttsPlaybackActive_ = false;
     captureSessionOpen_ = true;
@@ -416,7 +428,7 @@ void VoiceController::onStopButtonPressed(uint32_t nowMs) {
          engine_.isListening() ||
          engine_.isTranscribing());
     const bool wasPlaybackOrAi =
-        (state_ == JournalState::ANALYZING ||
+        ((state_ == JournalState::ANALYZING && aiRequestActive_) ||
          state_ == JournalState::SPEAKING ||
          aiRequestActive_ ||
          ttsPlaybackActive_ ||
@@ -424,6 +436,7 @@ void VoiceController::onStopButtonPressed(uint32_t nowMs) {
 
     // 1. Invalider le tour STT en cours et toute transcription en attente
     invalidateCurrentTurn();
+    cancelPendingAiPrompt();
 
     // 2. Annuler toute confirmation de suppression en attente
     if (router_.isClearConfirmationPending(nowMs)) {
@@ -477,10 +490,13 @@ void VoiceController::update(uint32_t nowMs) {
         processFinalTranscription(text, nowMs);
     }
 
-    // 4. Watchdogs non bloquants
+    // 4. Envoyer une eventuelle requete IA apres stabilisation post-STT
+    pumpPendingAiPrompt(nowMs);
+
+    // 5. Watchdogs non bloquants
     handleWatchdogs(nowMs);
 
-    // 5. Depiler la file d'attente TTS des que le moteur est disponible
+    // 6. Depiler la file d'attente TTS des que le moteur est disponible
     pumpSpeechQueue(nowMs);
 }
 
@@ -567,18 +583,12 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
             }
 
             String prompt = buildAnalysisPrompt();
-            logLine("[VJ][AI]", "Envoi requete analyse Gemini");
-            if (engine_.askAi(prompt)) {
-                aiRequestActive_ = true;
-                setStatusMessage("Analyse des observations en cours...");
-                setState(JournalState::ANALYZING);
-            } else {
-                String err = engine_.getLastError();
-                if (err.length() == 0) err = "Echec requete analyse IA";
-                Serial.printf("[VJ][ERROR] askAi() echoue : %s\n", err.c_str());
-                setStatusMessage(err);
-                setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
-            }
+            pendingAiPrompt_ = prompt;
+            hasPendingAiPrompt_ = true;
+            pendingAiDispatchAtMs_ = nowMs + AppConfig::AI_DISPATCH_SETTLE_MS;
+            logLine("[VJ][AI]", "Requete analyse Gemini planifiee (stabilisation post-STT)");
+            setStatusMessage("Analyse des observations en cours...");
+            setState(JournalState::ANALYZING);
             break;
         }
 
@@ -681,10 +691,51 @@ void VoiceController::pumpSpeechQueue(uint32_t nowMs) {
     }
 }
 
+void VoiceController::cancelPendingAiPrompt() {
+    hasPendingAiPrompt_ = false;
+    pendingAiPrompt_ = "";
+    pendingAiDispatchAtMs_ = 0;
+}
+
+void VoiceController::pumpPendingAiPrompt(uint32_t nowMs) {
+    if (!hasPendingAiPrompt_) {
+        return;
+    }
+    if (static_cast<int32_t>(nowMs - pendingAiDispatchAtMs_) < 0) {
+        return;
+    }
+
+    String prompt = pendingAiPrompt_;
+    cancelPendingAiPrompt();
+
+    if (state_ != JournalState::ANALYZING) {
+        return;
+    }
+
+    if (!engine_.isReady() || engine_.isBusy()) {
+        logLine("[VJ][AI]", "Analyse impossible : service IA indisponible");
+        setStatusMessage("Service IA indisponible. Notes conservees.");
+        transitionToEngineActualState();
+        return;
+    }
+
+    logLine("[VJ][AI]", "Envoi requete analyse Gemini");
+    if (engine_.askAi(prompt)) {
+        aiRequestActive_ = true;
+        stateEnteredAtMs_ = nowMs; // Demarrer le watchdog 20 s a l'envoi effectif
+    } else {
+        String err = engine_.getLastError();
+        if (err.length() == 0) err = "Echec requete analyse IA";
+        Serial.printf("[VJ][ERROR] askAi() echoue : %s\n", err.c_str());
+        setStatusMessage(err);
+        transitionToEngineActualState();
+    }
+}
+
 void VoiceController::handleWatchdogs(uint32_t nowMs) {
     // 1. Duree maximale d'une capture microphone
     if (state_ == JournalState::LISTENING &&
-        (nowMs - captureStartedAtMs_) >= AppConfig::MAX_CAPTURE_DURATION_MS) {
+        safeElapsedMs(nowMs, captureStartedAtMs_) >= AppConfig::MAX_CAPTURE_DURATION_MS) {
         logLine("[VJ][STT]", "Duree maximale de capture atteinte -> arret auto");
         finishListeningSession(nowMs);
         return;
@@ -692,7 +743,7 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
 
     // 2. Timeout applicatif d'attente de transcription finale
     if (state_ == JournalState::TRANSCRIBING &&
-        (nowMs - stateEnteredAtMs_) >= AppConfig::TRANSCRIPTION_WATCHDOG_MS) {
+        safeElapsedMs(nowMs, stateEnteredAtMs_) >= AppConfig::TRANSCRIPTION_WATCHDOG_MS) {
         logLine("[VJ][STT]", "Timeout attente transcription finale");
         invalidateCurrentTurn();
         engine_.cancelListening();
@@ -701,9 +752,10 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
         return;
     }
 
-    // 3. Timeout reponse IA
+    // 3. Timeout reponse IA (uniquement apres envoi effectif de askAi)
     if (state_ == JournalState::ANALYZING &&
-        (nowMs - stateEnteredAtMs_) >= AppConfig::AI_RESPONSE_TIMEOUT_MS) {
+        !hasPendingAiPrompt_ &&
+        safeElapsedMs(nowMs, stateEnteredAtMs_) >= AppConfig::AI_RESPONSE_TIMEOUT_MS) {
         logLine("[VJ][AI]", "Timeout reponse analyse IA");
         aiRequestActive_ = false;
         ttsPlaybackActive_ = false;
@@ -715,7 +767,7 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
 
     // 4. Timeout restitution audio TTS
     if (state_ == JournalState::SPEAKING &&
-        (nowMs - stateEnteredAtMs_) >= AppConfig::TTS_WATCHDOG_MS) {
+        safeElapsedMs(nowMs, stateEnteredAtMs_) >= AppConfig::TTS_WATCHDOG_MS) {
         logLine("[VJ][VOICE]", "Timeout restitution audio");
         aiRequestActive_ = false;
         ttsPlaybackActive_ = false;

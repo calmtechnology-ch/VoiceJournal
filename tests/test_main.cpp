@@ -724,9 +724,12 @@ void test_controller_stop_during_analyzing_and_late_ai_response() {
     ctrl.update(3300);
     EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
     EXPECT_TRUE(ctrl.isAiAnalysisActive());
+    // Laisser passer la fenetre de stabilisation post-STT pour l'envoi effectif de askAi()
+    ctrl.update(3300 + AppConfig::AI_DISPATCH_SETTLE_MS);
+    EXPECT_EQ(engine.askAiCalls, 1);
 
     // STOP pendant ANALYZING
-    ctrl.onStopButtonPressed(3350);
+    ctrl.onStopButtonPressed(3300 + AppConfig::AI_DISPATCH_SETTLE_MS + 50);
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
     EXPECT_FALSE(ctrl.isAiAnalysisActive());
     EXPECT_EQ(engine.stopCalls, 1);
@@ -734,12 +737,13 @@ void test_controller_stop_during_analyzing_and_late_ai_response() {
     EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
 
     // Demarrer une nouvelle capture puis recevoir une ancienne reponse IA tardive
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(3500));
+    const uint32_t tNewCap = 3300 + AppConfig::AI_DISPATCH_SETTLE_MS + 200;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tNewCap));
     EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
 
     engine.simulateAssistantText("Ancienne synthese obsolete");
     engine.simulateSpeechStarted();
-    ctrl.update(3550);
+    ctrl.update(tNewCap + 50);
 
     // L'ancienne reponse ne doit ni ecraser l'affichage ni perturber LISTENING
     EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
@@ -926,6 +930,12 @@ void test_controller_ai_analysis_prompt_and_no_double_say() {
     engine.simulateTranscription("Fais le bilan", true, turn);
     ctrl.update(8300);
 
+    // Avant la fin du delai de stabilisation post-STT : askAi() n'est pas encore envoye
+    EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+    EXPECT_EQ(engine.askAiCalls, 0);
+
+    // Apres AI_DISPATCH_SETTLE_MS : askAi() est envoye
+    ctrl.update(8300 + AppConfig::AI_DISPATCH_SETTLE_MS);
     EXPECT_EQ(engine.askAiCalls, 1);
     EXPECT_EQ(engine.sayCalls, 0);
     EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
@@ -933,12 +943,26 @@ void test_controller_ai_analysis_prompt_and_no_double_say() {
     EXPECT_TRUE(engine.aiPrompts[0].indexOf("Température 42°C") >= 0);
 
     engine.simulateAssistantText("Synthèse : température mesurée à 42°C.");
-    ctrl.update(8400);
+    ctrl.update(8300 + AppConfig::AI_DISPATCH_SETTLE_MS + 100);
     EXPECT_EQ(engine.sayCalls, 0);
     EXPECT_EQ(storage.count(), static_cast<size_t>(2));
 
     engine.simulateSpeechFinished();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Verification : STOP pendant la fenetre de stabilisation annule askAi() sans l'envoyer
+    const uint32_t t2 = 10000;
+    setMockMillis(t2);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(t2));
+    const uint32_t turn2 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(t2 + 100));
+    engine.simulateTranscription("Fais le bilan", true, turn2);
+    ctrl.update(t2 + 200);
+    EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+    ctrl.onStopButtonPressed(t2 + 300);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    ctrl.update(t2 + 200 + AppConfig::AI_DISPATCH_SETTLE_MS + 200);
+    EXPECT_EQ(engine.askAiCalls, 1); // Toujours 1 : le 2e askAi() n'a jamais ete envoye
 }
 
 void test_controller_transcription_timeout_then_new_capture() {
@@ -993,15 +1017,24 @@ void test_controller_ai_and_tts_watchdogs_recover() {
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    // 1. Timeout IA
+    // 1. Timeout IA + protection contre underflow uint32_t quand millis() avance pendant update(nowMs)
     EXPECT_TRUE(ctrl.onTalkButtonPressed(20100));
     const uint32_t t1 = engine.activeTurnId;
     EXPECT_TRUE(ctrl.onTalkButtonPressed(20200));
     engine.simulateTranscription("Fais le bilan", true, t1);
+    // Simuler millis() = 20305 > nowMs = 20300 (cas reel loop() sur ESP32-S3)
+    setMockMillis(20305);
     ctrl.update(20300);
     EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+    EXPECT_EQ(engine.stopCalls, 0); // Aucun faux timeout immediat par underflow
+    const uint32_t tAiSent = 20300 + AppConfig::AI_DISPATCH_SETTLE_MS;
+    setMockMillis(tAiSent + 5);
+    ctrl.update(tAiSent);
+    EXPECT_EQ(engine.askAiCalls, 1);
+    EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+    EXPECT_EQ(engine.stopCalls, 0);
 
-    setMockMillis(20300 + AppConfig::AI_RESPONSE_TIMEOUT_MS + 100);
+    setMockMillis(tAiSent + AppConfig::AI_RESPONSE_TIMEOUT_MS + 100);
     ctrl.update(millis());
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
     EXPECT_FALSE(ctrl.isAiAnalysisActive());

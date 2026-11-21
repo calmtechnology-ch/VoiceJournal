@@ -94,7 +94,7 @@ void setup() {
     cfg.volume = AppConfig::VOICE_VOLUME;
 
     cfg.enableConversation = false;
-    cfg.systemInstruction = VOICEKIT_DEFAULT_INTEGRATED_INSTRUCTION;
+    cfg.systemInstruction = AppConfig::VOICE_SYSTEM_INSTRUCTION;
     cfg.aiPromptPrefix = "";
     cfg.muteSpeakerDuringSTT = true;
     cfg.sttFinalTimeoutMs = AppConfig::STT_FINAL_TIMEOUT_MS;

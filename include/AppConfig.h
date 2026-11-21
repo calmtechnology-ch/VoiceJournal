@@ -24,6 +24,7 @@ static constexpr uint32_t    STT_FINAL_TIMEOUT_MS = 6000;
 // Temporisations, watchdogs et anti-rebond
 static constexpr uint32_t MAX_CAPTURE_DURATION_MS   = 15000; // Duree max d'une capture micro (15 s)
 static constexpr uint32_t TRANSCRIPTION_WATCHDOG_MS = 8000;  // Timeout applicatif transcription finale (8 s)
+static constexpr uint32_t AI_DISPATCH_SETTLE_MS     = 2500;  // Delai de stabilisation post-STT avant askAi() (2,5 s)
 static constexpr uint32_t AI_RESPONSE_TIMEOUT_MS    = 20000; // Timeout reponse analyse IA (20 s)
 static constexpr uint32_t TTS_WATCHDOG_MS           = 20000; // Timeout restitution TTS (20 s)
 static constexpr uint32_t CLEAR_CONFIRM_TIMEOUT_MS  = 15000; // Delai max de confirmation suppression (15 s)
@@ -37,6 +38,14 @@ static constexpr size_t MAX_AI_PROMPT_BYTES = 2048;
 static constexpr uint32_t SERIAL_BAUD_RATE        = 115200;
 static constexpr bool     MEMORY_DIAG_ENABLED     = true;
 static constexpr uint32_t MEMORY_DIAG_INTERVAL_MS = 30000;
+
+// Consigne systeme de session Gemini Live pour VoiceJournal (mode non conversationnel)
+// Evite qu'un tour audio STT ne declenche une longue reponse vocale parasite avant askAi().
+static constexpr const char* VOICE_SYSTEM_INSTRUCTION =
+    "Tu es le moteur vocal de l'application embarquee VoiceJournal en francais. "
+    "REGLE 1 (entree audio microphone sans message texte) : reponds TOUJOURS par un seul mot tres court ('OK') sans poser de question et sans expliquer. "
+    "REGLE 2 (message texte commencant par 'Prononce exactement et uniquement ce texte : ') : prononce tres exactement le texte demande sans aucun ajout ni commentaire. "
+    "REGLE 3 (message texte contenant <OBSERVATIONS_UTILISATEUR>) : reponds en francais de maniere factuelle et concise en deux a quatre phrases maximum en analysant uniquement ces observations.";
 
 // Consigne systeme applicative pour l'analyse IA (integree dans askAi)
 static constexpr const char* AI_LAB_SYSTEM_PROMPT =

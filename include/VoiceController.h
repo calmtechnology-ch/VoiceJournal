@@ -223,9 +223,9 @@ public:
     String buildAnalysisPrompt() const;
 
     /**
-     * @brief Indique si une requete IA est actuellement active.
+     * @brief Indique si une requete IA est actuellement active ou en attente d'envoi.
      */
-    bool isAiAnalysisActive() const { return aiRequestActive_; }
+    bool isAiAnalysisActive() const { return aiRequestActive_ || hasPendingAiPrompt_; }
 
     /**
      * @brief Nombre d'elements en attente dans la file TTS locale.
@@ -245,6 +245,8 @@ private:
 
     bool enqueueSpeech(const String& text);
     void pumpSpeechQueue(uint32_t nowMs);
+    void pumpPendingAiPrompt(uint32_t nowMs);
+    void cancelPendingAiPrompt();
     void handleWatchdogs(uint32_t nowMs);
     void invalidateCurrentTurn();
     void transitionToEngineActualState();
@@ -268,6 +270,11 @@ private:
     // Transcription finale differee pour traitement hors callback
     bool hasPendingFinal_ = false;
     String pendingFinalText_;
+
+    // Envoi differe de askAi() apres stabilisation post-STT (evite collision turnComplete)
+    bool hasPendingAiPrompt_ = false;
+    String pendingAiPrompt_;
+    uint32_t pendingAiDispatchAtMs_ = 0;
 
     // File TTS courte (evite tout appel say() quand le moteur est occupe)
     std::deque<String> ttsQueue_;
