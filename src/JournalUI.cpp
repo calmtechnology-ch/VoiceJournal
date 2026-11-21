@@ -8,7 +8,9 @@ void JournalUI::begin(const JournalViewModel& initialView) {
     view_ = initialView;
     needsRedraw_ = true;
 #ifdef ARDUINO
-    M5.Display.setRotation(1);
+    // M5Stack CoreS3 (ILI9342) est nativement en paysage 320x240 a la rotation 0
+    // (rotation 1 = portrait 240x320).
+    M5.Display.setRotation(0);
     M5.Display.setTextWrap(false);
     draw();
 #endif
