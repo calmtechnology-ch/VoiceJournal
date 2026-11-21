@@ -1,8 +1,8 @@
-# Architecture technique — VoiceJournal v0.1.0
+# Architecture technique — VoiceJournal v0.1.0.1 Corrective
 
 ## 1. Vue d'ensemble
 
-VoiceJournal v0.1.0 est une application embarquée modulaire construite **au-dessus de la façade publique `<VoiceKit.h>`** (VoiceKit v0.6.7.2), sans aucune modification de la bibliothèque et sans duplication de ses moteurs audio, WebSocket ou réseau.
+VoiceJournal v0.1.0.1 Corrective est une application embarquée modulaire construite **au-dessus de la façade publique `<VoiceKit.h>`** (VoiceKit révision Git `16646c73acf01a8d57408391bc6de15a288b8910`), sans aucune modification de la bibliothèque et sans duplication de ses moteurs audio, WebSocket ou réseau.
 
 ```text
 +-------------------------------------------------------------------+
@@ -13,12 +13,12 @@ VoiceJournal v0.1.0 est une application embarquée modulaire construite **au-des
                   v                                  v
 +----------------------------------+   +----------------------------+
 |            JournalUI             |   |       VoiceController      |
-| - M5GFX paysage 320x240          |   | - Machine a etats app      |
-| - Anti-rebond tactile (180 ms)   |   | - Correlation turnId STT   |
-| - Rendu conditionnel (dirty)     |<--| - File TTS bornee (4)      |
-+----------------------------------+   | - Construction prompt IA   |
-                                       | - STOP prioritaire         |
-                                       | - Watchdogs non bloquants  |
+| - M5GFX paysage 320x240 (rot 0)  |   | - Machine a etats app      |
+| - STOP prioritaire sans delai    |   | - Correlation turnId STT   |
+| - Anti-rebond dedie PARLER 180ms |<--| - File TTS bornee (4)      |
+| - Verrou maintien tactile        |   | - Construction prompt IA   |
+| - Rendu conditionnel (dirty)     |   | - STOP cible & idempotent  |
++----------------------------------+   | - Watchdogs non bloquants  |
                                        +---+----------+----------+--+
                                            |          |          |
                               +------------+          |          +------------+
@@ -26,10 +26,10 @@ VoiceJournal v0.1.0 est une application embarquée modulaire construite **au-des
                  +--------------------+   +--------------------+   +--------------------+
                  |   CommandRouter    |   |   JournalStorage   |   | VoiceKitEngineAdpt |
                  | - Normalisation FR |   | - Preferences NVS  |   | -> <VoiceKit.h>    |
-                 | - Prefixe "note"   |   | - Namespace        |   |   listen/stop/say  |
-                 | - Confirm CLEAR    |   |   "vjournal"       |   |   askAi/update     |
-                 +--------------------+   | - Circulaire 5x180 |   +--------------------+
-                                          +--------------------+
+                 | - Prefixe "note"   |   | - Double banque    |   |   listen/stop/say  |
+                 | - Confirm CLEAR    |   |   A/B + FNV-1a     |   |   cancelListening  |
+                 +--------------------+   | - Migration v0.1.0 |   |   askAi/update     |
+                                          +--------------------+   +--------------------+
 ```
 
 ---
@@ -39,10 +39,10 @@ VoiceJournal v0.1.0 est une application embarquée modulaire construite **au-des
 | Module | Responsabilité principale | Dépendances |
 |---|---|---|
 | `AppConfig.h` | Constantes, durées watchdogs, prompt système IA, enum `JournalState` | Standard C++ |
-| `JournalStorage` | Tampon circulaire 5 notes × 180 octets UTF-8, persistance NVS `"vjournal"`, intégrité UTF-8 | `Preferences` (via `IKeyValueStore`) |
+| `JournalStorage` | Double instantané borné A/B (5 notes × 180 octets UTF-8) en NVS `"vjournal"`, validation FNV-1a, contrôle strict des écritures/suppressions, migration depuis v0.1.0 | `Preferences` (via `IKeyValueStore`) |
 | `CommandRouter` | Analyse purement déterministe des transcriptions, gestion de l'état de confirmation `CLEAR` | `AppConfig.h` |
-| `VoiceController` | Machine à états applicative, corrélation stricte des tours STT (`turnId`), file TTS, analyse Gemini, `STOP` | `IVoiceEngine`, `JournalStorage`, `CommandRouter` |
-| `JournalUI` | Rendu M5GFX 320 × 240, gestion tactile avec anti-rebond, translittération d'affichage | `M5Unified` |
+| `VoiceController` | Machine à états applicative, corrélation stricte des tours STT (`turnId` / `maxInvalidatedTurnId_`), file TTS, analyse Gemini, `STOP` ciblé non destructif, watchdogs récupérables | `IVoiceEngine`, `JournalStorage`, `CommandRouter` |
+| `JournalUI` | Rendu M5GFX 320 × 240 (rotation `0`), filtrage tactile testable (`processTouchSample`) avec priorité absolue de `STOP`, anti-rebond dédié à `PARLER`, verrou de maintien | `M5Unified` |
 | `main.cpp` | Assemblage des composants, configuration `VoiceKitConfig`, boucle principale non bloquante, diagnostic mémoire | Tous les modules + `<VoiceKit.h>` |
 
 ---
@@ -78,22 +78,47 @@ INITIALIZING ──► CONNECTING ──► READY
                       └──[erreur critique]────────► ERROR_STATE
 ```
 
-### Invariants garantis
-1. **Pas de double capture** : `PARLER` est refusé hors de `READY` ou si `engine.isBusy()` / `ttsQueue` non vide / tour non clos.
-2. **Isolation des callbacks** : `onTranscriptionWithTurnId` ne réalise aucune opération NVS ni graphique bloquante ; la transcription finale valide est déposée dans un emplacement unique et traitée dans `VoiceController::update()`.
-3. **Corrélation stricte des tours STT** :
+### Invariants garantis (v0.1.0.1)
+1. **Priorité réelle de `STOP` dans `JournalUI`** :
+   - `STOP` est testé avant `PARLER` et n'est jamais bloqué par l'anti-rebond de `PARLER` (`180 ms`).
+   - Un contact maintenu (`touchDown_`) n'émet qu'un seul événement jusqu'au relâchement.
+   - Deux contacts distincts peuvent produire `PARLER` puis `STOP` à 50 ms ou 100 ms d'intervalle.
+2. **Pas de double capture** : `PARLER` est refusé hors de `READY` ou si `engine.isBusy()` / `ttsQueue` non vide / tour non clos.
+3. **Isolation des callbacks** : `onTranscriptionWithTurnId` ne réalise aucune opération NVS ni graphique bloquante ; la transcription finale valide est déposée dans un emplacement unique et traitée dans `VoiceController::update()`.
+4. **Corrélation stricte des tours STT** :
    - `expectedTurnId_` est capturé via `onListeningStartedWithTurnId(turnId)` avec repli sur `getActiveCaptureTurnId()` / `getPendingTranscriptionTurnId()` / `getLastCaptureTurnId()`.
    - Toute transcription partielle (`isFinal == false`) met uniquement à jour l'affichage sans déclencher d'action.
-   - Toute transcription finale appartenant à un tour annulé (`invalidatedTurnId_`), déjà traité (`lastProcessedTurnId_`) ou différent de `expectedTurnId_` est ignorée.
-4. **STOP prioritaire et non destructif** :
-   - Invalide `expectedTurnId_`, annule la confirmation `CLEAR` en cours, vide la file TTS locale, réinitialise `aiRequestActive_`, appelle `cancelListening()` si micro actif puis `stop()`.
+   - Toute transcription finale appartenant à un tour annulé (`turnId <= maxInvalidatedTurnId_`), déjà traité (`lastProcessedTurnId_`) ou différent de `expectedTurnId_` est ignorée.
+5. **STOP ciblé, idempotent et non destructif** :
+   - Pendant `LISTENING` ou `TRANSCRIBING` : appelle uniquement `cancelListening()` (sans appeler `stop()` ensuite, préservant `_cancelledCaptureTurnId` dans `VoxCoreVoice` et évitant toute perturbation de session).
+   - Pendant `ANALYZING` ou `SPEAKING` : appelle uniquement `stop()`.
+   - Sur un second `STOP` consécutif (moteur déjà libre) : aucun appel moteur redondant.
+   - Ne revient à `READY` qu'après confirmation de l'état réel du moteur (`engine_.isReady()`) ; reste en `STOPPING` si la libération est asynchrone.
    - Ne modifie jamais `JournalStorage`.
-5. **Reconnexion sans rejeu** :
-   - `onReady()` invalide tout tour antérieur et vide la file TTS locale afin qu'une reconnexion ne redéclenche jamais une ancienne commande.
+6. **Filtrage des réponses IA et audio tardives** :
+   - `onAssistantText` est ignoré si `!aiRequestActive_`.
+   - `onSpeechStarted` et `VoiceEngineState::SPEAKING` sont ignorés si ni `aiRequestActive_` ni `ttsPlaybackActive_` n'est actif, ou pendant `LISTENING` / `TRANSCRIBING` / `STOPPING`.
+7. **Reconnexion sans rejeu** :
+   - `onReady()` invalide tout tour antérieur, annule toute confirmation `CLEAR`, vide la file TTS locale et ne passe à `READY` qu'après confirmation `engine_.isReady()`.
 
 ---
 
-## 4. Échanges avec VoiceKit v0.6.7.2
+## 4. Fiabilisation NVS (Double instantané A/B)
+
+`Preferences` (NVS ESP-IDF) ne fournit pas de transaction atomique matérielle multi-clés. Pour empêcher toute divergence RAM/NVS ou corruption lors d'une coupure d'alimentation :
+
+- Deux banques indépendantes **A** (`a0..a4`, `ah`, `ac`, `ag`, `ak`) et **B** (`b0..b4`, `bh`, `bc`, `bg`, `bk`) coexistent dans le namespace `"vjournal"`, accompagnées de la clé de version `v2 = 0x564A3032` et de la référence active `act`.
+- Lors d'un `addNote()` ou d'un `clear()`, seule la banque **inactive** est écrite :
+  1. Invalidation immédiate de son marqueur de validation (`ak`/`bk = 0`).
+  2. Écriture des notes actives et suppression vérifiée (`isKey()` + `remove()`) des emplacements inutilisés.
+  3. Écriture de `head`, `count`, `gen` (monotone) et `act`.
+  4. Écriture en dernier du marqueur de validation FNV-1a (`ak`/`bk`).
+- Au redémarrage (`begin()`), les deux banques sont contrôlées (bornes + UTF-8 + somme FNV-1a) et la banque valide de génération la plus élevée est retenue.
+- Si un espace v0.1.0 (`magic = 0x564A3031`) est détecté, `migrateFromV1()` transfère les observations existantes dans leur ordre chronologique vers la banque A avant d'écrire `v2`.
+
+---
+
+## 5. Échanges avec VoiceKit (révision `16646c73acf01a8d57408391bc6de15a288b8910`)
 
 Configuration appliquée dans `main.cpp` :
 - `provider = VoiceProviderType::GEMINI`
@@ -110,16 +135,3 @@ API publiques utilisées sur `<VoiceKit.h>` :
 - Corrélation : `getActiveCaptureTurnId()`, `getPendingTranscriptionTurnId()`, `getLastCaptureTurnId()`
 - TTS / IA : `say()`, `askAi()`
 - Callbacks : `onReady()`, `onError()`, `onStateChanged()`, `onListeningStartedWithTurnId()`, `onListeningFinished()`, `onTranscriptionWithTurnId()`, `onAssistantText()`, `onSpeechStarted()`, `onSpeechFinished()`
-
----
-
-## 5. Choix concernant la validation locale des captures (VAD)
-
-VoiceKit v0.6.7.2 fournit `VoiceInteractionController` et `VoiceCaptureValidator`, conçus autour de `VoxCoreVoice` pour le flux conversationnel 2 clics. VoiceJournal v0.1.0 repose sur la façade publique `<VoiceKit.h>` en mode **non conversationnel** (`enableConversation = false`, 3 fonctions distinctes STT / TTS / IA).
-
-Par conséquent, la v0.1.0 **n'intègre pas le filtrage VAD RMS avancé** et applique à la place les garde-fous locaux suivants :
-- Rejet des transcriptions vides ou composées uniquement d'espaces.
-- Rejet des captures annulées via `STOP`.
-- Durée maximale de capture micro : **15 s** (arrêt automatique).
-- Watchdog applicatif d'attente de transcription finale : **8 s**.
-- Interdiction stricte de toute capture concurrente avant clôture du tour précédent.

@@ -1,41 +1,48 @@
-# Procédure de validation matérielle — VoiceJournal v0.1.0 (M5Stack CoreS3)
+# Procédure de validation matérielle — VoiceJournal v0.1.0.1 Corrective (M5Stack CoreS3)
 
-> **Règle d'honnêteté technique :** Aucun test ci-dessous ne doit être marqué `PASS` sans exécution réelle sur un **M5Stack CoreS3** physique connecté au Wi-Fi 2.4 GHz et à Google Gemini Live.
+> **Règle d'honnêteté technique :** Aucun test ci-dessous ne doit être marqué `PASS` sans exécution réelle sur un **M5Stack CoreS3** physique connecté au Wi-Fi 2.4 GHz et à Google Gemini Live. La réussite de la compilation PlatformIO ou des tests natifs ne constitue pas une validation matérielle.
 
 ## 1. Prérequis de banc d'essai
 
 - M5Stack CoreS3 alimenté par câble USB-C données (≥ 5 V / 1 A).
 - `include/secrets.h` configuré avec un réseau Wi-Fi 2.4 GHz et une clé API Gemini valide.
-- Firmware compilé et téléversé (`pio run -t upload`).
+- Firmware **v0.1.0.1 Corrective** compilé et téléversé (`pio run -e m5stack-cores3 -t upload`).
 - Moniteur série ouvert à 115 200 bauds (`pio device monitor -b 115200`).
 
-## 2. Grille de validation manuelle
+## 2. Grille de validation manuelle (VJ-01 à VJ-18 conservés + VJ-19 à VJ-24 ajoutés)
 
 Statuts autorisés : `PASS` | `FAIL` | `NOT RUN`
 
-| ID | Scénario | Procédure de test | Résultat attendu | Statut | Observations |
-|---|---|---|---|---|---|
-| **VJ-01** | Démarrage | Alimenter le CoreS3 et observer l'écran et le moniteur série | Affichage immédiat de l'interface, connexion Wi-Fi/Gemini puis passage à `PRET` (`[VJ][VOICE] READY`) | `NOT RUN` | |
-| **VJ-02** | Première observation | Cliquer `PARLER`, dire *« Note, le prototype redémarre »*, cliquer `TERMINER` | Note enregistrée en NVS (`[VJ][STORAGE] Ecriture NVS OK`), compteur à `1 / 5`, confirmation TTS *« Note enregistrée. »* | `NOT RUN` | |
-| **VJ-03** | Deuxième observation | Dicter une seconde note *« Note, température stable à 38 degrés »* | Compteur passe à `2 / 5`, écriture NVS confirmée | `NOT RUN` | |
-| **VJ-04** | Lecture dernière note | Dire *« Lis la dernière note »* | Lecture vocale et affichage du texte exact de la deuxième observation | `NOT RUN` | |
-| **VJ-05** | Nombre de notes | Dire *« Combien de notes ? »* | Restitution vocale *« Le carnet contient 2 notes. »* | `NOT RUN` | |
-| **VJ-06** | Demande de bilan | Dire *« Fais le bilan »* (puis tester *« Résume les observations »*) | Passage en `ANALYSE IA`, synthèse Gemini en français (2 à 4 phrases), sans invention ni double `say()` | `NOT RUN` | |
-| **VJ-07** | Redémarrage | Couper l'alimentation USB-C puis redémarrer le CoreS3 | Compteur `2 / 5` immédiatement visible au boot avant même la connexion Wi-Fi ; notes intactes | `NOT RUN` | |
-| **VJ-08** | Six observations | Enregistrer 6 notes successives | Rotation circulaire : compteur reste `5 / 5`, la 1re note est remplacée, ordre chronologique 2..6 préservé | `NOT RUN` | |
-| **VJ-09** | STOP pendant TTS | Lancer *« Lis la dernière note »* puis cliquer `STOP` en cours de lecture | Audio coupé immédiatement, retour à `PRET`, notes conservées, commande suivante fonctionnelle | `NOT RUN` | |
-| **VJ-10** | STOP pendant STT | Cliquer `PARLER`, parler puis cliquer `STOP` sans cliquer `TERMINER` | Micro fermé, aucune note parasite enregistrée, retour à `PRET` | `NOT RUN` | |
-| **VJ-11** | Capture silencieuse | Cliquer `PARLER`, rester silencieux 2 s, cliquer `TERMINER` | Aucune note enregistrée, retour propre à `PRET` | `NOT RUN` | |
-| **VJ-12** | Déconnexion Wi-Fi | Couper le point d'accès Wi-Fi | Passage à `DECONNECTE`, bouton `PARLER` désactivé, compteur de notes toujours affiché, notes NVS intactes | `NOT RUN` | |
-| **VJ-13** | Reconnexion | Rétablir le point d'accès Wi-Fi | Retour automatique à `PRET` sans rejouer la dernière commande | `NOT RUN` | |
-| **VJ-14** | Clics rapides | Appuyer rapidement plusieurs fois sur `PARLER` | Anti-rebond actif, aucune double capture ni erreur audio | `NOT RUN` | |
-| **VJ-15** | Suppression sans confirmation | Dire *« Efface toutes les notes »*, puis dire *« Oui »* ou attendre 15 s | Aucune suppression effectuée, toutes les notes conservées | `NOT RUN` | |
-| **VJ-16** | Suppression confirmée | Dire *« Efface toutes les notes »*, puis *« Confirmer la suppression »* dans les 15 s | Carnet vidé (`0 / 5`), confirmation TTS, reste vide après redémarrage | `NOT RUN` | |
-| **VJ-17** | Transcription tardive | Cliquer `TERMINER` puis cliquer `STOP` immédiatement avant réception finale | Résultat obsolète ignoré (`[VJ][STT] Transcription obsolete ignoree`), aucune commande exécutée | `NOT RUN` | |
-| **VJ-18** | Timeout | Couper le réseau juste après `TERMINER` (pendant `TRANSCRIPTION`) | Déclenchement du watchdog (8 s), pas de blocage permanent, retour à état cohérent | `NOT RUN` | |
+| ID | Scénario | Manipulation | Comportement attendu | Traces série à observer | Résultat réel | Statut |
+|---|---|---|---|---|---|---|
+| **VJ-01** | Démarrage | Alimenter le CoreS3 et observer l'écran et le moniteur série | Affichage immédiat de l'interface (`VoiceJournal v0.1.0.1`), connexion Wi-Fi/Gemini puis passage à `PRET` | `[VJ][BOOT] VoiceJournal v0.1.0.1`, `[VJ][STORAGE] NVS initialisee`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-02** | Première observation | Cliquer `PARLER`, dire *« Note, le prototype redémarre »*, cliquer `TERMINER` | Note enregistrée en NVS, compteur à `1 / 5`, confirmation TTS *« Note enregistrée. »* | `[VJ][STT] Transcription finale recue`, `[VJ][COMMAND] ADD_NOTE`, `[VJ][STORAGE] Ecriture NVS OK`, `[VJ][STORAGE] Notes: 1` | _Non exécuté_ | `NOT RUN` |
+| **VJ-03** | Deuxième observation | Dicter une seconde note *« Note, température stable à 38 degrés »* | Compteur passe à `2 / 5`, écriture NVS confirmée | `[VJ][STORAGE] Ecriture NVS OK`, `[VJ][STORAGE] Notes: 2` | _Non exécuté_ | `NOT RUN` |
+| **VJ-04** | Lecture dernière note | Dire *« Lis la dernière note »* | Lecture vocale et affichage du texte exact de la deuxième observation | `[VJ][COMMAND] READ_LAST_NOTE` | _Non exécuté_ | `NOT RUN` |
+| **VJ-05** | Nombre de notes | Dire *« Combien de notes ? »* | Restitution vocale *« Le carnet contient 2 notes. »* | `[VJ][COMMAND] COUNT_NOTES` | _Non exécuté_ | `NOT RUN` |
+| **VJ-06** | Demande de bilan | Dire *« Fais le bilan »* (puis tester *« Résume les observations »*) | Passage en `ANALYSE IA`, synthèse Gemini en français (2 à 4 phrases), sans invention ni double `say()` | `[VJ][COMMAND] ANALYZE_NOTES`, `[VJ][AI] Envoi requete analyse Gemini`, `[VJ][AI] Restitution analyse terminee` | _Non exécuté_ | `NOT RUN` |
+| **VJ-07** | Redémarrage | Couper l'alimentation USB-C puis redémarrer le CoreS3 | Compteur `2 / 5` immédiatement visible au boot avant même la connexion Wi-Fi ; notes intactes | `[VJ][STORAGE] NVS initialisee`, `[VJ][STORAGE] Notes: 2` | _Non exécuté_ | `NOT RUN` |
+| **VJ-08** | Six observations | Enregistrer 6 notes successives | Rotation circulaire : compteur reste `5 / 5`, la 1re note est remplacée, ordre chronologique 2..6 préservé | `[VJ][STORAGE] Notes: 5` (6e ajout) | _Non exécuté_ | `NOT RUN` |
+| **VJ-09** | STOP pendant TTS | Lancer *« Lis la dernière note »* puis cliquer `STOP` en cours de lecture | Audio coupé immédiatement, retour à `PRET`, notes conservées, commande suivante fonctionnelle | `[VJ][STOP] Interruption demandee`, `[VJ][VOICE] State SPEAKING -> STOPPING`, `... -> READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-10** | STOP pendant STT | Cliquer `PARLER`, parler puis cliquer `STOP` sans cliquer `TERMINER` | Micro fermé, aucune note parasite enregistrée, retour à `PRET` | `[VJ][STOP] Interruption demandee`, `[VoiceKit] cancelListening()`, retour `READY` sans reconnexion | _Non exécuté_ | `NOT RUN` |
+| **VJ-11** | Capture silencieuse | Cliquer `PARLER`, rester silencieux 2 s, cliquer `TERMINER` | Aucune note enregistrée, retour propre à `PRET` | `[VJ][STT] Transcription finale vide ignoree` | _Non exécuté_ | `NOT RUN` |
+| **VJ-12** | Déconnexion Wi-Fi | Couper le point d'accès Wi-Fi | Passage à `DECONNECTE`, bouton `PARLER` désactivé, compteur de notes toujours affiché, notes NVS intactes | `[VJ][VOICE] State READY -> DISCONNECTED` | _Non exécuté_ | `NOT RUN` |
+| **VJ-13** | Reconnexion | Rétablir le point d'accès Wi-Fi | Retour automatique à `PRET` sans rejouer la dernière commande | `[VJ][VOICE] READY`, aucune ligne `[VJ][COMMAND]` parasite | _Non exécuté_ | `NOT RUN` |
+| **VJ-14** | Clics rapides | Appuyer rapidement plusieurs fois sur `PARLER` | Anti-rebond 180 ms actif, aucune double capture ni erreur audio | Un seul `[VJ][UI] PARLER` / `[VJ][STT] Capture demarree` | _Non exécuté_ | `NOT RUN` |
+| **VJ-15** | Suppression sans confirmation | Dire *« Efface toutes les notes »*, puis dire *« Oui »* ou attendre 15 s | Aucune suppression effectuée, toutes les notes conservées | `[VJ][COMMAND] REQUEST_CLEAR`, puis `[VJ][COMMAND] UNKNOWN` ou `Confirmation de suppression expiree` | _Non exécuté_ | `NOT RUN` |
+| **VJ-16** | Suppression confirmée | Dire *« Efface toutes les notes »*, puis *« Confirmer la suppression »* dans les 15 s | Carnet vidé (`0 / 5`), confirmation TTS, reste vide après redémarrage | `[VJ][COMMAND] CONFIRM_CLEAR`, `[VJ][STORAGE] Carnet efface (NVS OK)` | _Non exécuté_ | `NOT RUN` |
+| **VJ-17** | Transcription tardive | Cliquer `TERMINER` puis cliquer `STOP` immédiatement avant réception finale | Résultat obsolète ignoré, aucune commande exécutée | `[VJ][STOP] Interruption demandee`, `[VJ][STT] Transcription ignoree` ou `obsolete ignoree` | _Non exécuté_ | `NOT RUN` |
+| **VJ-18** | Timeout | Couper le réseau juste après `TERMINER` (pendant `TRANSCRIPTION`) | Déclenchement du watchdog (8 s), pas de blocage permanent, retour à état cohérent | `[VJ][STT] Timeout attente transcription finale` | _Non exécuté_ | `NOT RUN` |
+| **VJ-19** | **STOP moins de 100 ms après PARLER** | À l'état `PRET`, appuyer brièvement sur `PARLER` puis appuyer immédiatement sur `STOP` (< 100 ms après le premier clic) | `STOP` immédiatement pris en compte sans être bloqué par l'anti-rebond de `PARLER` ; micro arrêté, retour `PRET`, aucune note écrite en NVS | `[VJ][UI] PARLER` suivi immédiatement de `[VJ][STOP] Interruption demandee`, `[VoiceKit] cancelListening()`, retour `READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-20** | **STOP maintenu sans déclenchements multiples** | Lancer une lecture (`Lis la dernière note`) puis appuyer sur `STOP` et maintenir le doigt appuyé 2 secondes sans le lever | Une seule interruption déclenchée au contact initial ; aucun événement `STOP` supplémentaire tant que le doigt reste maintenu | Une seule occurrence de `[VJ][STOP] Interruption demandee` pendant toute la durée du maintien | _Non exécuté_ | `NOT RUN` |
+| **VJ-21** | **Deux STOP successifs puis nouvelle capture** | Démarrer `PARLER`, cliquer `STOP`, relâcher, cliquer une seconde fois sur `STOP`, puis cliquer `PARLER` et dicter une note valide | Premier `STOP` annule l'écoute ; second `STOP` est idempotent sans erreur ni reconnexion ; nouvelle capture et enregistrement NVS réussissent normalement | 1er `[VJ][STOP]` suivi de `cancelListening()`, 2e `[VJ][STOP]` sans nouvel appel `stop()`/`cancelListening()`, puis `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
+| **VJ-22** | **Récupération NVS après interruption simulée** | Enregistrer 3 notes (ou flasher sur un CoreS3 contenant déjà des notes v0.1.0), couper l'alimentation USB-C en cours de session puis redémarrer ; vérifier ensuite un ajout et un redémarrage | Reprise sur le dernier instantané valide (ou migration v0.1.0 préservant les notes) ; aucun effacement silencieux, ordre chronologique intact | `[VJ][STORAGE] NVS initialisee` (et éventuellement `[VJ][STORAGE] Migration NVS v0.1.0 -> v0.1.0.1 reussie` ou `Banque ... incomplete/invalide ignoree`) | _Non exécuté_ | `NOT RUN` |
+| **VJ-23** | **Reconnexion après annulation d'une transcription** | Cliquer `PARLER`, dicter *« Note, test annulé »*, cliquer `TERMINER`, cliquer `STOP` pendant `TRANSCRIPTION`, couper le Wi-Fi puis le rétablir | Après reconnexion, l'appareil revient à `PRET` sans enregistrer la note annulée, sans répéter de TTS ancien et en conservant les notes existantes | `[VJ][STOP] Interruption demandee`, `[VJ][VOICE] State ... -> DISCONNECTED`, `[VJ][VOICE] READY`, aucune ligne `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
+| **VJ-24** | **Nouvelle conversation après timeout de restitution** | Lancer *« Fais le bilan »* ou *« Lis la dernière note »*, couper le flux réseau en cours de restitution pour déclencher le watchdog (`TTS_WATCHDOG_MS` / `AI_RESPONSE_TIMEOUT_MS` = 20 s), rétablir le réseau puis dicter une nouvelle note | Watchdog libère proprement l'état sans blocage permanent ; dès retour à `PRET`, la nouvelle capture et l'enregistrement fonctionnent normalement | `[VJ][VOICE] Timeout restitution audio` (ou `[VJ][AI] Timeout reponse analyse IA`), retour `READY`, puis nouvelle capture `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
 
 ## 3. Synthèse de campagne
 
+- **Version testée :** VoiceJournal v0.1.0.1 Corrective
 - **Date d'exécution :** _À compléter_
 - **Opérateur :** _À compléter_
-- **Bilan :** `0 PASS` / `0 FAIL` / `18 NOT RUN`
+- **Bilan :** `0 PASS` / `0 FAIL` / `24 NOT RUN`

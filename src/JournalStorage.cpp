@@ -22,6 +22,11 @@ public:
         }
     }
 
+    bool isKey(const char* key) const override {
+        if (!opened_ || !key) return false;
+        return prefs_.isKey(key);
+    }
+
     uint32_t getUInt(const char* key, uint32_t defaultValue) const override {
         if (!opened_) return defaultValue;
         return prefs_.getUInt(key, defaultValue);
@@ -56,6 +61,22 @@ private:
 } // namespace
 #endif
 
+namespace {
+
+inline void fnv1aFeedByte(uint32_t& hash, uint8_t b) {
+    hash ^= static_cast<uint32_t>(b);
+    hash *= 16777619UL;
+}
+
+inline void fnv1aFeedUInt32(uint32_t& hash, uint32_t v) {
+    fnv1aFeedByte(hash, static_cast<uint8_t>(v & 0xFFu));
+    fnv1aFeedByte(hash, static_cast<uint8_t>((v >> 8) & 0xFFu));
+    fnv1aFeedByte(hash, static_cast<uint8_t>((v >> 16) & 0xFFu));
+    fnv1aFeedByte(hash, static_cast<uint8_t>((v >> 24) & 0xFFu));
+}
+
+} // namespace
+
 JournalStorage::JournalStorage() {
 #ifdef ARDUINO
     store_ = new NvsKeyValueStore();
@@ -81,8 +102,62 @@ JournalStorage::~JournalStorage() {
     }
 }
 
-void JournalStorage::formatSlotKey(size_t slot, char* outBuf, size_t bufSize) {
+void JournalStorage::formatLegacySlotKey(size_t slot, char* outBuf, size_t bufSize) {
     std::snprintf(outBuf, bufSize, "n%u", static_cast<unsigned>(slot));
+}
+
+void JournalStorage::formatBankSlotKey(uint8_t bank, size_t slot, char* outBuf, size_t bufSize) {
+    const char prefix = (bank == 0) ? 'a' : 'b';
+    std::snprintf(outBuf, bufSize, "%c%u", prefix, static_cast<unsigned>(slot));
+}
+
+const char* JournalStorage::bankHeadKey(uint8_t bank) {
+    return (bank == 0) ? "ah" : "bh";
+}
+
+const char* JournalStorage::bankCountKey(uint8_t bank) {
+    return (bank == 0) ? "ac" : "bc";
+}
+
+const char* JournalStorage::bankGenKey(uint8_t bank) {
+    return (bank == 0) ? "ag" : "bg";
+}
+
+const char* JournalStorage::bankCommitKey(uint8_t bank) {
+    return (bank == 0) ? "ak" : "bk";
+}
+
+bool JournalStorage::isSlotActive(size_t slot, size_t head, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        if (((head + i) % AppConfig::MAX_NOTES) == slot) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t JournalStorage::computeChecksum(uint32_t gen,
+                                         size_t head,
+                                         size_t count,
+                                         const std::array<String, AppConfig::MAX_NOTES>& notes) {
+    uint32_t hash = 2166136261UL; // FNV-1a 32-bit offset basis
+    fnv1aFeedUInt32(hash, kStorageMagicV2);
+    fnv1aFeedUInt32(hash, gen);
+    fnv1aFeedUInt32(hash, static_cast<uint32_t>(head));
+    fnv1aFeedUInt32(hash, static_cast<uint32_t>(count));
+
+    for (size_t i = 0; i < count; ++i) {
+        const size_t slot = (head + i) % AppConfig::MAX_NOTES;
+        const String& s = notes[slot];
+        fnv1aFeedUInt32(hash, static_cast<uint32_t>(s.length()));
+        const char* raw = s.c_str();
+        for (size_t k = 0; k < s.length(); ++k) {
+            fnv1aFeedByte(hash, static_cast<uint8_t>(raw[k]));
+        }
+    }
+
+    // 0 est reserve pour indiquer un instantane non valide
+    return (hash == 0) ? 1UL : hash;
 }
 
 String JournalStorage::truncateUtf8(const String& text, size_t maxBytes) {
@@ -152,11 +227,221 @@ bool JournalStorage::isValidUtf8Length(const String& text, size_t maxBytes) {
     return true;
 }
 
+bool JournalStorage::loadBank(uint8_t bank, Snapshot& outSnapshot) const {
+    outSnapshot = Snapshot{};
+    if (!store_) {
+        return false;
+    }
+
+    const uint32_t commit = store_->getUInt(bankCommitKey(bank), 0);
+    if (commit == 0) {
+        return false;
+    }
+
+    const uint32_t gen = store_->getUInt(bankGenKey(bank), 0);
+    const uint32_t storedHead = store_->getUInt(bankHeadKey(bank), static_cast<uint32_t>(AppConfig::MAX_NOTES));
+    const uint32_t storedCount = store_->getUInt(bankCountKey(bank), static_cast<uint32_t>(AppConfig::MAX_NOTES + 1));
+
+    if (gen == 0 || storedHead >= AppConfig::MAX_NOTES || storedCount > AppConfig::MAX_NOTES) {
+        return false;
+    }
+
+    char keyBuf[8];
+    for (size_t i = 0; i < storedCount; ++i) {
+        const size_t slot = (storedHead + i) % AppConfig::MAX_NOTES;
+        formatBankSlotKey(bank, slot, keyBuf, sizeof(keyBuf));
+        if (!store_->isKey(keyBuf)) {
+            return false;
+        }
+        String val = store_->getString(keyBuf, "");
+        if (!isValidUtf8Length(val, AppConfig::MAX_NOTE_BYTES)) {
+            return false;
+        }
+        outSnapshot.notes[slot] = val;
+    }
+
+    const uint32_t expected = computeChecksum(gen, storedHead, storedCount, outSnapshot.notes);
+    if (commit != expected) {
+        return false;
+    }
+
+    outSnapshot.head = storedHead;
+    outSnapshot.count = storedCount;
+    outSnapshot.generation = gen;
+    outSnapshot.valid = true;
+    return true;
+}
+
+bool JournalStorage::commitSnapshot(uint8_t bank,
+                                    uint32_t gen,
+                                    const std::array<String, AppConfig::MAX_NOTES>& notes,
+                                    size_t head,
+                                    size_t count) {
+    if (!store_) {
+        lastError_ = "Backend NVS absent";
+        return false;
+    }
+
+    // 1. Invalider le marqueur de validation de la banque cible AVANT toute modification.
+    //    En cas de coupure d'alimentation aux etapes suivantes, la banque active precedente reste intacte.
+    if (!store_->putUInt(bankCommitKey(bank), 0)) {
+        lastError_ = "Echec invalidation marqueur banque NVS";
+        return false;
+    }
+
+    // 2. Ecrire les notes actives et supprimer les emplacements inutilises dans la banque cible.
+    char keyBuf[8];
+    for (size_t slot = 0; slot < AppConfig::MAX_NOTES; ++slot) {
+        formatBankSlotKey(bank, slot, keyBuf, sizeof(keyBuf));
+        if (isSlotActive(slot, head, count)) {
+            if (!store_->putString(keyBuf, notes[slot])) {
+                lastError_ = "Echec ecriture note NVS";
+                return false;
+            }
+        } else if (store_->isKey(keyBuf)) {
+            if (!store_->remove(keyBuf)) {
+                lastError_ = "Echec suppression emplacement NVS";
+                return false;
+            }
+        }
+    }
+
+    // 3. Ecrire les metadonnees (index circulaire, compteur, generation, reference active).
+    if (!store_->putUInt(bankHeadKey(bank), static_cast<uint32_t>(head))) {
+        lastError_ = "Echec mise a jour index circulaire NVS";
+        return false;
+    }
+    if (!store_->putUInt(bankCountKey(bank), static_cast<uint32_t>(count))) {
+        lastError_ = "Echec mise a jour compteur NVS";
+        return false;
+    }
+    if (!store_->putUInt(bankGenKey(bank), gen)) {
+        lastError_ = "Echec mise a jour generation NVS";
+        return false;
+    }
+    if (!store_->putUInt(kKeyActive, static_cast<uint32_t>(bank))) {
+        lastError_ = "Echec mise a jour reference active NVS";
+        return false;
+    }
+
+    // 4. Ecrire le marqueur de validation FNV-1a EN DERNIER.
+    const uint32_t checksum = computeChecksum(gen, head, count, notes);
+    if (!store_->putUInt(bankCommitKey(bank), checksum)) {
+        lastError_ = "Echec validation instantane NVS";
+        return false;
+    }
+
+    return true;
+}
+
+size_t JournalStorage::salvageBankNotes(uint8_t bank,
+                                        std::array<String, AppConfig::MAX_NOTES>& outNotes) const {
+    size_t recovered = 0;
+    char keyBuf[8];
+    for (size_t slot = 0; slot < AppConfig::MAX_NOTES && recovered < AppConfig::MAX_NOTES; ++slot) {
+        formatBankSlotKey(bank, slot, keyBuf, sizeof(keyBuf));
+        if (!store_->isKey(keyBuf)) {
+            continue;
+        }
+        String val = store_->getString(keyBuf, "");
+        val.trim();
+        if (val.length() > AppConfig::MAX_NOTE_BYTES) {
+            val = truncateUtf8(val, AppConfig::MAX_NOTE_BYTES);
+        }
+        if (isValidUtf8Length(val, AppConfig::MAX_NOTE_BYTES)) {
+            outNotes[recovered++] = val;
+        }
+    }
+    return recovered;
+}
+
+bool JournalStorage::migrateFromV1() {
+    const uint32_t storedHead = store_->getUInt(kKeyHeadV1, 0);
+    const uint32_t storedCount = store_->getUInt(kKeyCountV1, 0);
+
+    std::array<String, AppConfig::MAX_NOTES> migrated;
+    size_t validCount = 0;
+    char keyBuf[8];
+    bool metadataCorrupted = (storedHead >= AppConfig::MAX_NOTES || storedCount > AppConfig::MAX_NOTES);
+
+    if (!metadataCorrupted) {
+        for (size_t i = 0; i < storedCount; ++i) {
+            const size_t slot = (storedHead + i) % AppConfig::MAX_NOTES;
+            formatLegacySlotKey(slot, keyBuf, sizeof(keyBuf));
+            if (!store_->isKey(keyBuf)) {
+                metadataCorrupted = true;
+                continue;
+            }
+            String val = store_->getString(keyBuf, "");
+            val.trim();
+            if (val.length() > AppConfig::MAX_NOTE_BYTES) {
+                val = truncateUtf8(val, AppConfig::MAX_NOTE_BYTES);
+            }
+            if (isValidUtf8Length(val, AppConfig::MAX_NOTE_BYTES) && validCount < AppConfig::MAX_NOTES) {
+                migrated[validCount++] = val;
+            } else {
+                metadataCorrupted = true;
+            }
+        }
+    } else {
+        // Metadonnees v0.1.0 hors bornes : recuperer toutes les notes encore valides sans effacer silencieusement
+        for (size_t slot = 0; slot < AppConfig::MAX_NOTES && validCount < AppConfig::MAX_NOTES; ++slot) {
+            formatLegacySlotKey(slot, keyBuf, sizeof(keyBuf));
+            if (!store_->isKey(keyBuf)) {
+                continue;
+            }
+            String val = store_->getString(keyBuf, "");
+            val.trim();
+            if (val.length() > AppConfig::MAX_NOTE_BYTES) {
+                val = truncateUtf8(val, AppConfig::MAX_NOTE_BYTES);
+            }
+            if (isValidUtf8Length(val, AppConfig::MAX_NOTE_BYTES)) {
+                migrated[validCount++] = val;
+            }
+        }
+    }
+
+    // Persister l'instantane migre dans la banque 0 (generation 1) avant d'ecrire le magic v2.
+    // En cas de coupure avant l'ecriture de kKeyMagicV2, les cles v0.1.0 restent intactes.
+    if (!commitSnapshot(0, 1, migrated, 0, validCount)) {
+        lastError_ = String("Echec migration NVS v0.1.0: ") + lastError_;
+        return false;
+    }
+
+    if (!store_->putUInt(kKeyMagicV2, kStorageMagicV2)) {
+        lastError_ = "Echec finalisation migration NVS v0.1.0.1";
+        return false;
+    }
+
+    notes_ = migrated;
+    head_ = 0;
+    count_ = validCount;
+    activeBank_ = 0;
+    generation_ = 1;
+
+    if (metadataCorrupted) {
+        recoveryDiagnostic_ = "Migration v0.1.0 avec recuperation partielle des metadonnees";
+        Serial.printf("[VJ][STORAGE] %s (%u notes recuperees)\n",
+                      recoveryDiagnostic_.c_str(),
+                      static_cast<unsigned>(validCount));
+    } else {
+        recoveryDiagnostic_ = "Migration NVS v0.1.0 -> v0.1.0.1 reussie";
+        Serial.printf("[VJ][STORAGE] %s (%u notes preservees)\n",
+                      recoveryDiagnostic_.c_str(),
+                      static_cast<unsigned>(validCount));
+    }
+
+    return true;
+}
+
 bool JournalStorage::begin() {
     lastError_ = "";
+    recoveryDiagnostic_ = "";
     initialized_ = false;
     head_ = 0;
     count_ = 0;
+    activeBank_ = 0;
+    generation_ = 0;
     for (size_t i = 0; i < AppConfig::MAX_NOTES; ++i) {
         notes_[i] = "";
     }
@@ -171,13 +456,92 @@ bool JournalStorage::begin() {
         return false;
     }
 
-    const uint32_t magic = store_->getUInt(kKeyMagic, 0);
-    if (magic != kStorageMagic) {
-        // Premier demarrage ou espace vierge : initialiser proprement les metadonnees
-        if (!store_->putUInt(kKeyHead, 0) ||
-            !store_->putUInt(kKeyCount, 0) ||
-            !store_->putUInt(kKeyMagic, kStorageMagic)) {
-            lastError_ = "Echec initialisation metadonnees NVS";
+    const uint32_t magicV2 = store_->getUInt(kKeyMagicV2, 0);
+    if (magicV2 == kStorageMagicV2) {
+        Snapshot snapA;
+        Snapshot snapB;
+        const bool okA = loadBank(0, snapA);
+        const bool okB = loadBank(1, snapB);
+
+        if (okA || okB) {
+            uint8_t chosenBank = 0;
+            if (okA && okB) {
+                if (snapB.generation > snapA.generation) {
+                    chosenBank = 1;
+                } else if (snapA.generation > snapB.generation) {
+                    chosenBank = 0;
+                } else {
+                    const uint32_t actHint = store_->getUInt(kKeyActive, 0);
+                    chosenBank = (actHint == 1) ? 1 : 0;
+                }
+            } else if (okA) {
+                chosenBank = 0;
+                if (store_->isKey(bankGenKey(1)) || store_->isKey(bankCommitKey(1))) {
+                    recoveryDiagnostic_ = "Banque B incomplete/invalide ignoree, reprise sur banque A";
+                    Serial.printf("[VJ][STORAGE] %s\n", recoveryDiagnostic_.c_str());
+                }
+            } else {
+                chosenBank = 1;
+                if (store_->isKey(bankGenKey(0)) || store_->isKey(bankCommitKey(0))) {
+                    recoveryDiagnostic_ = "Banque A incomplete/invalide ignoree, reprise sur banque B";
+                    Serial.printf("[VJ][STORAGE] %s\n", recoveryDiagnostic_.c_str());
+                }
+            }
+
+            const Snapshot& chosen = (chosenBank == 0) ? snapA : snapB;
+            notes_ = chosen.notes;
+            head_ = chosen.head;
+            count_ = chosen.count;
+            activeBank_ = chosenBank;
+            generation_ = chosen.generation;
+            initialized_ = true;
+            return true;
+        }
+
+        // Aucune des deux banques n'est valide : corruption reelle.
+        // Ne pas reinitialiser silencieusement : tenter de sauver les notes valides.
+        const uint32_t actHint = store_->getUInt(kKeyActive, 0);
+        const uint8_t primaryBank = (actHint == 1) ? 1 : 0;
+        const uint8_t secondaryBank = static_cast<uint8_t>(1 - primaryBank);
+
+        std::array<String, AppConfig::MAX_NOTES> salvaged;
+        size_t salvagedCount = salvageBankNotes(primaryBank, salvaged);
+        if (salvagedCount == 0) {
+            salvagedCount = salvageBankNotes(secondaryBank, salvaged);
+        }
+
+        if (salvagedCount > 0) {
+            const uint32_t nextGen = 1;
+            if (!commitSnapshot(0, nextGen, salvaged, 0, salvagedCount)) {
+                lastError_ = String("Corruption NVS et echec recuperation: ") + lastError_;
+                Serial.printf("[VJ][STORAGE][ERROR] %s\n", lastError_.c_str());
+                store_->close();
+                return false;
+            }
+            notes_ = salvaged;
+            head_ = 0;
+            count_ = salvagedCount;
+            activeBank_ = 0;
+            generation_ = nextGen;
+            recoveryDiagnostic_ = "Corruption metadonnees NVS : observations valides recuperees";
+            Serial.printf("[VJ][STORAGE] %s (%u notes)\n",
+                          recoveryDiagnostic_.c_str(),
+                          static_cast<unsigned>(salvagedCount));
+            initialized_ = true;
+            return true;
+        }
+
+        lastError_ = "Corruption NVS : aucun instantane valide recuperable";
+        Serial.printf("[VJ][STORAGE][ERROR] %s\n", lastError_.c_str());
+        store_->close();
+        return false;
+    }
+
+    // Verifier presence d'un carnet au format v0.1.0 pour migration non destructive
+    const uint32_t magicV1 = store_->getUInt(kKeyMagicV1, 0);
+    if (magicV1 == kStorageMagicV1) {
+        if (!migrateFromV1()) {
+            Serial.printf("[VJ][STORAGE][ERROR] %s\n", lastError_.c_str());
             store_->close();
             return false;
         }
@@ -185,60 +549,30 @@ bool JournalStorage::begin() {
         return true;
     }
 
-    const uint32_t storedHead  = store_->getUInt(kKeyHead, 0);
-    const uint32_t storedCount = store_->getUInt(kKeyCount, 0);
-
-    // Verification stricte des bornes pour recuperation propre apres coupure d'alimentation
-    if (storedHead >= AppConfig::MAX_NOTES || storedCount > AppConfig::MAX_NOTES) {
-        lastError_ = "Metadonnees NVS corrompues, reinitialisation";
-        head_ = 0;
-        count_ = 0;
-        store_->putUInt(kKeyHead, 0);
-        store_->putUInt(kKeyCount, 0);
-        initialized_ = true;
-        return true;
+    // Espace NVS corrompu avec magic inconnu : ne pas effacer silencieusement
+    if (magicV1 != 0 || magicV2 != 0) {
+        lastError_ = "Signature NVS inconnue ou corrompue";
+        Serial.printf("[VJ][STORAGE][ERROR] %s (v1=0x%08X, v2=0x%08X)\n",
+                      lastError_.c_str(),
+                      static_cast<unsigned>(magicV1),
+                      static_cast<unsigned>(magicV2));
+        store_->close();
+        return false;
     }
 
-    // Charger uniquement les notes valides en preservant l'ordre chronologique
-    std::array<String, AppConfig::MAX_NOTES> recovered;
-    size_t validCount = 0;
-    char keyBuf[8];
-
-    for (size_t i = 0; i < storedCount; ++i) {
-        const size_t slot = (storedHead + i) % AppConfig::MAX_NOTES;
-        formatSlotKey(slot, keyBuf, sizeof(keyBuf));
-        String val = store_->getString(keyBuf, "");
-        val.trim();
-        if (val.length() > 0) {
-            if (val.length() > AppConfig::MAX_NOTE_BYTES) {
-                val = truncateUtf8(val, AppConfig::MAX_NOTE_BYTES);
-            }
-            if (val.length() > 0 && validCount < AppConfig::MAX_NOTES) {
-                recovered[validCount++] = val;
-            }
+    // Premier demarrage (espace vierge) : creer un instantane vide valide dans banque 0
+    std::array<String, AppConfig::MAX_NOTES> emptyNotes;
+    if (!commitSnapshot(0, 1, emptyNotes, 0, 0) ||
+        !store_->putUInt(kKeyMagicV2, kStorageMagicV2)) {
+        if (lastError_.length() == 0) {
+            lastError_ = "Echec initialisation metadonnees NVS";
         }
+        store_->close();
+        return false;
     }
 
-    if (validCount == storedCount) {
-        head_ = storedHead;
-        count_ = storedCount;
-        for (size_t i = 0; i < count_; ++i) {
-            const size_t slot = (head_ + i) % AppConfig::MAX_NOTES;
-            notes_[slot] = recovered[i];
-        }
-    } else {
-        // Recompacter proprement si un emplacement etait manquant/vide apres coupure
-        head_ = 0;
-        count_ = validCount;
-        for (size_t i = 0; i < validCount; ++i) {
-            notes_[i] = recovered[i];
-            formatSlotKey(i, keyBuf, sizeof(keyBuf));
-            store_->putString(keyBuf, notes_[i]);
-        }
-        store_->putUInt(kKeyHead, 0);
-        store_->putUInt(kKeyCount, static_cast<uint32_t>(validCount));
-    }
-
+    activeBank_ = 0;
+    generation_ = 1;
     initialized_ = true;
     return true;
 }
@@ -268,6 +602,7 @@ bool JournalStorage::addNote(const String& text) {
         return false;
     }
 
+    std::array<String, AppConfig::MAX_NOTES> candidateNotes = notes_;
     size_t targetSlot = 0;
     size_t newHead = head_;
     size_t newCount = count_;
@@ -282,41 +617,22 @@ bool JournalStorage::addNote(const String& text) {
         newCount = AppConfig::MAX_NOTES;
     }
 
-    // 1. Ecrire d'abord la charge utile en NVS
-    char keyBuf[8];
-    formatSlotKey(targetSlot, keyBuf, sizeof(keyBuf));
-    if (!store_->putString(keyBuf, cleaned)) {
-        lastError_ = "Echec ecriture note NVS";
+    candidateNotes[targetSlot] = cleaned;
+
+    const uint8_t targetBank = static_cast<uint8_t>(1 - activeBank_);
+    const uint32_t nextGen = generation_ + 1;
+
+    if (!commitSnapshot(targetBank, nextGen, candidateNotes, newHead, newCount)) {
+        // Echec NVS : la banque active et la RAM restent integralement preservees
         return false;
     }
 
-    // 2. Mettre a jour les metadonnees en NVS (head puis count)
-    if (newHead != head_) {
-        if (!store_->putUInt(kKeyHead, static_cast<uint32_t>(newHead))) {
-            // Restaurer l'ancienne note dans le slot si possible
-            if (notes_[targetSlot].length() > 0) {
-                store_->putString(keyBuf, notes_[targetSlot]);
-            }
-            lastError_ = "Echec mise a jour head NVS";
-            return false;
-        }
-    }
-
-    if (newCount != count_) {
-        if (!store_->putUInt(kKeyCount, static_cast<uint32_t>(newCount))) {
-            // Annuler le changement de head si necessaire
-            if (newHead != head_) {
-                store_->putUInt(kKeyHead, static_cast<uint32_t>(head_));
-            }
-            lastError_ = "Echec mise a jour count NVS";
-            return false;
-        }
-    }
-
-    // 3. Confirmer en RAM uniquement apres succes complet NVS
-    notes_[targetSlot] = cleaned;
+    // Confirmer en RAM uniquement apres validation complete de l'instantane NVS
+    notes_ = candidateNotes;
     head_ = newHead;
     count_ = newCount;
+    activeBank_ = targetBank;
+    generation_ = nextGen;
     return true;
 }
 
@@ -359,24 +675,46 @@ bool JournalStorage::clear() {
         return false;
     }
 
-    // Mettre count=0 et head=0 en NVS en premier pour garantir un etat vide coherent
-    if (!store_->putUInt(kKeyCount, 0)) {
-        lastError_ = "Echec effacement count NVS";
-        return false;
-    }
-    if (!store_->putUInt(kKeyHead, 0)) {
-        lastError_ = "Echec effacement head NVS";
+    std::array<String, AppConfig::MAX_NOTES> emptyNotes;
+    const uint8_t oldBank = activeBank_;
+    const uint8_t targetBank = static_cast<uint8_t>(1 - activeBank_);
+    const uint32_t nextGen = generation_ + 1;
+
+    // 1. Valider d'abord l'instantane vide dans la banque inactive.
+    //    Si une suppression de cle ou une ecriture echoue ici, l'ancien etat reste intact en RAM et en NVS.
+    if (!commitSnapshot(targetBank, nextGen, emptyNotes, 0, 0)) {
         return false;
     }
 
-    char keyBuf[8];
-    for (size_t i = 0; i < AppConfig::MAX_NOTES; ++i) {
-        formatSlotKey(i, keyBuf, sizeof(keyBuf));
-        store_->remove(keyBuf);
-        notes_[i] = "";
-    }
-
+    // 2. Des lors que l'instantane vide de generation superieure est valide, la RAM reflete
+    //    immediatement cet etat persistant (aucune contradiction RAM/NVS, aucune resurrection au reboot).
+    notes_ = emptyNotes;
     head_ = 0;
     count_ = 0;
+    activeBank_ = targetBank;
+    generation_ = nextGen;
+
+    // 3. Nettoyer l'ancienne banque et verifier chaque suppression NVS.
+    bool cleanupOk = true;
+    if (store_->isKey(bankCommitKey(oldBank))) {
+        if (!store_->putUInt(bankCommitKey(oldBank), 0)) {
+            cleanupOk = false;
+        }
+    }
+    char keyBuf[8];
+    for (size_t slot = 0; slot < AppConfig::MAX_NOTES; ++slot) {
+        formatBankSlotKey(oldBank, slot, keyBuf, sizeof(keyBuf));
+        if (store_->isKey(keyBuf)) {
+            if (!store_->remove(keyBuf)) {
+                cleanupOk = false;
+            }
+        }
+    }
+
+    if (!cleanupOk) {
+        lastError_ = "Echec suppression complete des anciennes cles NVS";
+        return false;
+    }
+
     return true;
 }

@@ -42,41 +42,63 @@ bool JournalUI::isTalkButtonEnabled() const {
     return (view_.state == JournalState::READY || view_.state == JournalState::LISTENING);
 }
 
-TouchAction JournalUI::pollTouch(uint32_t nowMs) {
-#ifdef ARDUINO
-    auto touch = M5.Touch.getDetail();
-    if (!touch.wasPressed()) {
+bool JournalUI::isInsideRect(int x, int y, int rx, int ry, int rw, int rh) {
+    return (x >= rx && x <= (rx + rw) && y >= ry && y <= (ry + rh));
+}
+
+TouchAction JournalUI::processTouchSample(const TouchSample& sample, uint32_t nowMs) {
+    // 1. Aucun contact actif : reinitialiser le verrou de maintien
+    if (!sample.isPressed && !sample.wasPressed) {
+        touchDown_ = false;
         return TouchAction::NONE;
     }
 
-    // Anti-rebond tactile
-    if ((nowMs - lastTouchAcceptedMs_) < AppConfig::TOUCH_DEBOUNCE_MS) {
+    // 2. Contact physique deja actif (doigt maintenu) : ne jamais regenerer d'evenement
+    if (touchDown_) {
+        if (!sample.isPressed) {
+            touchDown_ = false;
+        }
         return TouchAction::NONE;
     }
 
-    const int x = touch.x;
-    const int y = touch.y;
+    // Nouveau contact physique detecte
+    touchDown_ = sample.isPressed;
 
-    // 1. Bouton STOP (prioritaire, toujours actif)
-    if (x >= BTN_STOP_X && x <= (BTN_STOP_X + BTN_STOP_W) &&
-        y >= BTN_Y && y <= (BTN_Y + BTN_H)) {
-        lastTouchAcceptedMs_ = nowMs;
+    // 3. Bouton STOP examine EN PREMIER, independant de l'anti-rebond de PARLER,
+    //    et disponible dans tous les etats (LISTENING, TRANSCRIBING, ANALYZING, SPEAKING, etc.)
+    if (isInsideRect(sample.x, sample.y, BTN_STOP_X, BTN_Y, BTN_STOP_W, BTN_H)) {
         return TouchAction::STOP;
     }
 
-    // 2. Bouton PARLER / TERMINER (actif uniquement si READY ou LISTENING)
-    if (x >= BTN_TALK_X && x <= (BTN_TALK_X + BTN_TALK_W) &&
-        y >= BTN_Y && y <= (BTN_Y + BTN_H)) {
+    // 4. Bouton PARLER / TERMINER : etat compatible + anti-rebond dedie
+    if (isInsideRect(sample.x, sample.y, BTN_TALK_X, BTN_Y, BTN_TALK_W, BTN_H)) {
         if (!isTalkButtonEnabled()) {
             return TouchAction::NONE;
         }
-        lastTouchAcceptedMs_ = nowMs;
+        if (hasLastTalkAccepted_ && (nowMs - lastTalkAcceptedMs_) < AppConfig::TOUCH_DEBOUNCE_MS) {
+            return TouchAction::NONE;
+        }
+        hasLastTalkAccepted_ = true;
+        lastTalkAcceptedMs_ = nowMs;
         return TouchAction::TALK_TOGGLE;
     }
+
+    return TouchAction::NONE;
+}
+
+TouchAction JournalUI::pollTouch(uint32_t nowMs) {
+#ifdef ARDUINO
+    auto touch = M5.Touch.getDetail();
+    TouchSample sample;
+    sample.isPressed = touch.isPressed();
+    sample.wasPressed = touch.wasPressed();
+    sample.x = touch.x;
+    sample.y = touch.y;
+    return processTouchSample(sample, nowMs);
 #else
     (void)nowMs;
-#endif
     return TouchAction::NONE;
+#endif
 }
 
 String JournalUI::toDisplayAscii(const String& utf8) {

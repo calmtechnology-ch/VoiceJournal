@@ -247,6 +247,7 @@ private:
     void pumpSpeechQueue(uint32_t nowMs);
     void handleWatchdogs(uint32_t nowMs);
     void invalidateCurrentTurn();
+    void transitionToEngineActualState();
 
     static String formatCountSpeech(size_t count);
 
@@ -262,7 +263,7 @@ private:
     bool captureSessionOpen_ = false;
     uint32_t expectedTurnId_ = 0;
     uint32_t lastProcessedTurnId_ = 0;
-    uint32_t invalidatedTurnId_ = 0;
+    uint32_t maxInvalidatedTurnId_ = 0;
 
     // Transcription finale differee pour traitement hors callback
     bool hasPendingFinal_ = false;
@@ -271,8 +272,9 @@ private:
     // File TTS courte (evite tout appel say() quand le moteur est occupe)
     std::deque<String> ttsQueue_;
 
-    // Suivi des requetes IA et watchdogs
+    // Suivi des requetes IA, restitution TTS et watchdogs
     bool aiRequestActive_ = false;
+    bool ttsPlaybackActive_ = false;
     uint32_t stateEnteredAtMs_ = 0;
     uint32_t captureStartedAtMs_ = 0;
 };

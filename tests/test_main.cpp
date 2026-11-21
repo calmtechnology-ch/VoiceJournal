@@ -1,11 +1,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "Arduino.h"
 #include "AppConfig.h"
 #include "CommandRouter.h"
 #include "JournalStorage.h"
+#include "JournalUI.h"
 #include "VoiceController.h"
 #include "MockKeyValueStore.h"
 #include "MockVoiceEngine.h"
@@ -37,8 +39,35 @@ void runTest(const char* name, void (*fn)()) {
     }
 }
 
+TouchSample makeTalkPress() {
+    TouchSample s;
+    s.isPressed = true;
+    s.wasPressed = true;
+    s.x = JournalUI::BTN_TALK_X + (JournalUI::BTN_TALK_W / 2);
+    s.y = JournalUI::BTN_Y + (JournalUI::BTN_H / 2);
+    return s;
+}
+
+TouchSample makeStopPress(bool risingEdge = true) {
+    TouchSample s;
+    s.isPressed = true;
+    s.wasPressed = risingEdge;
+    s.x = JournalUI::BTN_STOP_X + (JournalUI::BTN_STOP_W / 2);
+    s.y = JournalUI::BTN_Y + (JournalUI::BTN_H / 2);
+    return s;
+}
+
+TouchSample makeRelease() {
+    TouchSample s;
+    s.isPressed = false;
+    s.wasPressed = false;
+    s.x = 0;
+    s.y = 0;
+    return s;
+}
+
 // =============================================================================
-// 1. Tests JournalStorage
+// 1. Tests JournalStorage (regression v0.1.0 + fiabilisation v0.1.0.1)
 // =============================================================================
 
 void test_storage_initially_empty() {
@@ -143,38 +172,276 @@ void test_storage_simulated_reboot_persistence() {
     }
 }
 
-void test_storage_simulated_write_failure() {
+void test_storage_simulated_write_failures_targeted() {
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
-    EXPECT_TRUE(storage.addNote("Obs valide"));
-    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_TRUE(storage.addNote("Obs 1"));
+    EXPECT_TRUE(storage.addNote("Obs 2"));
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
 
-    // Simuler un echec d'ecriture NVS : ne doit pas modifier le compteur ni la derniere note
-    store.failNextWrite = true;
-    EXPECT_FALSE(storage.addNote("Obs echouee"));
-    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
-    EXPECT_EQ(storage.getLastNote(), "Obs valide");
+    // La banque active apres 2 ajouts est 0 ("a"), la prochaine cible est 1 ("b")
+    const char* targetNoteKey  = (storage.getActiveBank() == 0) ? "b2" : "a2";
+    const char* targetHeadKey  = (storage.getActiveBank() == 0) ? "bh" : "ah";
+    const char* targetCountKey = (storage.getActiveBank() == 0) ? "bc" : "ac";
+
+    // 1. Echec d'ecriture d'une note
+    store.failOnKey = targetNoteKey;
+    EXPECT_FALSE(storage.addNote("Obs echouee note"));
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
+    EXPECT_EQ(storage.getNote(0), "Obs 1");
+    EXPECT_EQ(storage.getNote(1), "Obs 2");
+    store.resetFaultInjection();
+
+    // 2. Echec de mise a jour de l'index circulaire (head)
+    store.failOnKey = targetHeadKey;
+    EXPECT_FALSE(storage.addNote("Obs echouee head"));
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
+    EXPECT_EQ(storage.getLastNote(), "Obs 2");
+    store.resetFaultInjection();
+
+    // 3. Echec de mise a jour du compteur (count)
+    store.failOnKey = targetCountKey;
+    EXPECT_FALSE(storage.addNote("Obs echouee count"));
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
+    EXPECT_EQ(storage.getLastNote(), "Obs 2");
+    store.resetFaultInjection();
+
+    // Apres redemarrage, les 2 observations originales sont intactes
+    {
+        JournalStorage rebooted(&store);
+        EXPECT_TRUE(rebooted.begin());
+        EXPECT_EQ(rebooted.count(), static_cast<size_t>(2));
+        EXPECT_EQ(rebooted.getNote(0), "Obs 1");
+        EXPECT_EQ(rebooted.getNote(1), "Obs 2");
+    }
 }
 
-void test_storage_clear_persists() {
-    MockKeyValueStore store;
+void test_storage_clear_persists_and_checks_remove_failure() {
+    // Cas 1 : clear nominal persiste apres redemarrage
     {
-        JournalStorage s1(&store);
-        EXPECT_TRUE(s1.begin());
-        EXPECT_TRUE(s1.addNote("Obs 1"));
-        EXPECT_TRUE(s1.clear());
-        EXPECT_EQ(s1.count(), static_cast<size_t>(0));
+        MockKeyValueStore store;
+        {
+            JournalStorage s1(&store);
+            EXPECT_TRUE(s1.begin());
+            EXPECT_TRUE(s1.addNote("Obs 1"));
+            EXPECT_TRUE(s1.addNote("Obs 2"));
+            EXPECT_TRUE(s1.clear());
+            EXPECT_EQ(s1.count(), static_cast<size_t>(0));
+        }
+        {
+            JournalStorage s2(&store);
+            EXPECT_TRUE(s2.begin());
+            EXPECT_EQ(s2.count(), static_cast<size_t>(0));
+        }
     }
+
+    // Cas 2 : echec de suppression d'une note dans la banque cible (avant commit)
+    // -> clear() retourne false, RAM et NVS restent coherents avec les notes existantes
     {
-        JournalStorage s2(&store);
-        EXPECT_TRUE(s2.begin());
-        EXPECT_EQ(s2.count(), static_cast<size_t>(0));
+        MockKeyValueStore store;
+        JournalStorage s(&store);
+        EXPECT_TRUE(s.begin());
+        EXPECT_TRUE(s.addNote("Obs 1"));
+        EXPECT_TRUE(s.addNote("Obs 2")); // banque active = 0, banque inactive = 1 contient "b0"
+        store.failNextRemove = true;
+        EXPECT_FALSE(s.clear());
+        EXPECT_EQ(s.count(), static_cast<size_t>(2));
+        EXPECT_EQ(s.getNote(0), "Obs 1");
+        EXPECT_EQ(s.getNote(1), "Obs 2");
+        store.resetFaultInjection();
+
+        JournalStorage rebooted(&store);
+        EXPECT_TRUE(rebooted.begin());
+        EXPECT_EQ(rebooted.count(), static_cast<size_t>(2));
+        EXPECT_EQ(rebooted.getNote(1), "Obs 2");
+    }
+
+    // Cas 3 : echec de suppression d'une cle dans l'ancienne banque (apres commit)
+    // -> clear() retourne false, RAM = 0 (coherent avec NVS), reboot ne ressuscite PAS les notes
+    {
+        MockKeyValueStore store;
+        JournalStorage s(&store);
+        EXPECT_TRUE(s.begin());
+        EXPECT_TRUE(s.addNote("Obs 1")); // activeBank = 1, "b0" existe, banque 0 vide
+        store.failRemoveOnKey = "b0";
+        EXPECT_FALSE(s.clear());
+        EXPECT_EQ(s.count(), static_cast<size_t>(0));
+        EXPECT_TRUE(s.getLastError().length() > 0);
+        store.resetFaultInjection();
+
+        JournalStorage rebooted(&store);
+        EXPECT_TRUE(rebooted.begin());
+        EXPECT_EQ(rebooted.count(), static_cast<size_t>(0));
+    }
+}
+
+void test_storage_power_cut_every_step_add_note() {
+    // Test parametre : simuler une coupure apres k = 0..12 operations lors d'un ajout (y compris rotation)
+    for (int cutAt = 0; cutAt <= 12; ++cutAt) {
+        MockKeyValueStore store;
+        {
+            JournalStorage s(&store);
+            EXPECT_TRUE(s.begin());
+            EXPECT_TRUE(s.addNote("N1"));
+            EXPECT_TRUE(s.addNote("N2"));
+            EXPECT_TRUE(s.addNote("N3"));
+            EXPECT_TRUE(s.addNote("N4"));
+            EXPECT_TRUE(s.addNote("N5"));
+
+            store.powerCutAfterOps = cutAt;
+            const bool added = s.addNote("N6");
+            store.resetFaultInjection();
+
+            if (!added) {
+                EXPECT_EQ(s.count(), static_cast<size_t>(5));
+                EXPECT_EQ(s.getNote(0), "N1");
+                EXPECT_EQ(s.getNote(4), "N5");
+            } else {
+                EXPECT_EQ(s.count(), static_cast<size_t>(5));
+                EXPECT_EQ(s.getNote(0), "N2");
+                EXPECT_EQ(s.getNote(4), "N6");
+            }
+        }
+
+        // Redemarrage apres coupure : doit correspondre exactement a l'ancien OU au nouvel etat valide
+        {
+            JournalStorage rebooted(&store);
+            EXPECT_TRUE(rebooted.begin());
+            EXPECT_EQ(rebooted.count(), static_cast<size_t>(5));
+            const bool isOldState = (rebooted.getNote(0) == "N1" && rebooted.getNote(4) == "N5");
+            const bool isNewState = (rebooted.getNote(0) == "N2" && rebooted.getNote(4) == "N6");
+            EXPECT_TRUE(isOldState || isNewState);
+        }
+    }
+}
+
+void test_storage_power_cut_every_step_clear() {
+    // Test parametre : simuler une coupure apres k = 0..16 operations lors de clear()
+    for (int cutAt = 0; cutAt <= 16; ++cutAt) {
+        MockKeyValueStore store;
+        bool clearReturnedTrue = false;
+        {
+            JournalStorage s(&store);
+            EXPECT_TRUE(s.begin());
+            EXPECT_TRUE(s.addNote("N1"));
+            EXPECT_TRUE(s.addNote("N2"));
+            EXPECT_TRUE(s.addNote("N3"));
+
+            store.powerCutAfterOps = cutAt;
+            clearReturnedTrue = s.clear();
+            store.resetFaultInjection();
+        }
+
+        JournalStorage rebooted(&store);
+        EXPECT_TRUE(rebooted.begin());
+        if (clearReturnedTrue) {
+            // Si clear() a retourne true, aucune note ne doit JAMAIS ressusciter
+            EXPECT_EQ(rebooted.count(), static_cast<size_t>(0));
+        } else {
+            // Si coupure pendant clear(), soit l'etat complet N1..N3 soit l'etat vide (jamais hybride)
+            const bool isOld = (rebooted.count() == 3 &&
+                                rebooted.getNote(0) == "N1" &&
+                                rebooted.getNote(2) == "N3");
+            const bool isEmpty = (rebooted.count() == 0);
+            EXPECT_TRUE(isOld || isEmpty);
+        }
+    }
+}
+
+void test_storage_begin_failure_and_corruption_diagnostic() {
+    // 1. Echec d'ecriture lors de l'initialisation vierge -> begin() doit retourner false
+    {
+        MockKeyValueStore store;
+        store.failAllWrites = true;
+        JournalStorage s(&store);
+        EXPECT_FALSE(s.begin());
+        EXPECT_FALSE(s.isInitialized());
+        EXPECT_TRUE(s.getLastError().length() > 0);
+    }
+
+    // 2. Corruption totale sans note recuperable -> begin() refuse de reinitialiser silencieusement
+    {
+        MockKeyValueStore store;
+        store.uints["v2"] = 0x564A3032UL;
+        store.uints["ak"] = 0xDEADBEEFUL; // Checksum invalide, aucune note
+        store.uints["bk"] = 0;
+        JournalStorage s(&store);
+        EXPECT_FALSE(s.begin());
+        EXPECT_FALSE(s.isInitialized());
+        EXPECT_TRUE(s.getLastError().length() > 0);
+    }
+
+    // 3. Corruption metadonnees avec notes encore valides + echec d'ecriture de recuperation -> false
+    {
+        MockKeyValueStore store;
+        store.uints["v2"] = 0x564A3032UL;
+        store.uints["ak"] = 0xDEADBEEFUL; // Checksum corrompu
+        store.strings["a0"] = "Observation survivante";
+        store.failAllWrites = true;
+        JournalStorage s(&store);
+        EXPECT_FALSE(s.begin());
+        EXPECT_FALSE(s.isInitialized());
+    }
+
+    // 4. Corruption metadonnees avec notes encore valides + ecriture OK -> notes preservees + diagnostic
+    {
+        MockKeyValueStore store;
+        store.uints["v2"] = 0x564A3032UL;
+        store.uints["ak"] = 0xDEADBEEFUL; // Checksum corrompu
+        store.strings["a0"] = "Observation survivante 1";
+        store.strings["a1"] = "Observation survivante 2";
+        JournalStorage s(&store);
+        EXPECT_TRUE(s.begin());
+        EXPECT_EQ(s.count(), static_cast<size_t>(2));
+        EXPECT_EQ(s.getNote(0), "Observation survivante 1");
+        EXPECT_EQ(s.getNote(1), "Observation survivante 2");
+        EXPECT_TRUE(s.getRecoveryDiagnostic().length() > 0);
+    }
+}
+
+void test_storage_migration_from_v010_five_notes_rotated() {
+    MockKeyValueStore store;
+    // Simuler un espace NVS v0.1.0 existant avec 5 notes apres rotation (head = 2)
+    store.uints["magic"] = 0x564A3031UL; // "VJ01"
+    store.uints["head"]  = 2;
+    store.uints["count"] = 5;
+    store.strings["n2"] = "Ancienne 1 (plus ancienne)";
+    store.strings["n3"] = "Ancienne 2 — accentuée";
+    store.strings["n4"] = "Ancienne 3";
+    store.strings["n0"] = "Ancienne 4";
+    store.strings["n1"] = "Ancienne 5 (plus recente)";
+
+    // Premiere ouverture en v0.1.0.1 : migration transparente
+    {
+        JournalStorage migrated(&store);
+        EXPECT_TRUE(migrated.begin());
+        EXPECT_EQ(migrated.count(), static_cast<size_t>(5));
+        EXPECT_EQ(migrated.getNote(0), "Ancienne 1 (plus ancienne)");
+        EXPECT_EQ(migrated.getNote(1), "Ancienne 2 — accentuée");
+        EXPECT_EQ(migrated.getNote(2), "Ancienne 3");
+        EXPECT_EQ(migrated.getNote(3), "Ancienne 4");
+        EXPECT_EQ(migrated.getNote(4), "Ancienne 5 (plus recente)");
+        EXPECT_EQ(migrated.getLastNote(), "Ancienne 5 (plus recente)");
+        EXPECT_TRUE(migrated.getRecoveryDiagnostic().length() > 0);
+    }
+
+    // Second demarrage en v0.1.0.1 : lecture directe du nouveau format A/B
+    {
+        JournalStorage secondBoot(&store);
+        EXPECT_TRUE(secondBoot.begin());
+        EXPECT_EQ(secondBoot.count(), static_cast<size_t>(5));
+        EXPECT_EQ(secondBoot.getNote(0), "Ancienne 1 (plus ancienne)");
+        EXPECT_EQ(secondBoot.getNote(4), "Ancienne 5 (plus recente)");
+        EXPECT_TRUE(secondBoot.addNote("Nouvelle 6"));
+        EXPECT_EQ(secondBoot.count(), static_cast<size_t>(5));
+        EXPECT_EQ(secondBoot.getNote(0), "Ancienne 2 — accentuée");
+        EXPECT_EQ(secondBoot.getNote(4), "Nouvelle 6");
     }
 }
 
 // =============================================================================
-// 2. Tests CommandRouter
+// 2. Tests CommandRouter (regression)
 // =============================================================================
 
 void test_router_note_prefix_and_variants() {
@@ -215,37 +482,125 @@ void test_router_mandatory_commands_case_and_accents() {
 void test_router_clear_confirmation_cancel_and_expiration() {
     CommandRouter router(10000); // 10 s
 
-    // Sans demande prealable, "Confirmer la suppression" ne doit pas effacer
     EXPECT_EQ(router.route("Confirmer la suppression", 1000).type, CommandType::UNKNOWN);
-
-    // Demande explicite
     EXPECT_EQ(router.route("Efface toutes les notes.", 1000).type, CommandType::REQUEST_CLEAR);
     router.armClearConfirmation(1000);
     EXPECT_TRUE(router.isClearConfirmationPending(5000));
 
-    // Un simple "oui" ne doit JAMAIS confirmer la suppression
     auto vague = router.route("Oui", 5000);
     EXPECT_EQ(vague.type, CommandType::UNKNOWN);
     EXPECT_FALSE(router.isClearConfirmationPending(5000));
 
-    // Annulation explicite
     router.armClearConfirmation(6000);
     EXPECT_EQ(router.route("Annuler", 7000).type, CommandType::CANCEL_CLEAR);
     EXPECT_FALSE(router.isClearConfirmationPending(7000));
 
-    // Expiration apres delai
     router.armClearConfirmation(10000);
     EXPECT_FALSE(router.isClearConfirmationPending(25000));
     EXPECT_EQ(router.route("Confirmer la suppression", 25000).type, CommandType::UNKNOWN);
 
-    // Confirmation explicite dans le delai
     router.armClearConfirmation(30000);
     EXPECT_EQ(router.route("Confirmer la suppression.", 35000).type, CommandType::CONFIRM_CLEAR);
     EXPECT_FALSE(router.isClearConfirmationPending(35000));
 }
 
 // =============================================================================
-// 3. Tests VoiceController
+// 3. Tests JournalUI (Correction 1 — priorite STOP et anti-rebond PARLER)
+// =============================================================================
+
+void test_ui_stop_priority_50ms_and_100ms_after_talk() {
+    JournalUI ui;
+    JournalViewModel vm;
+    vm.state = JournalState::READY;
+    ui.begin(vm);
+
+    // PARLER a t=1000 ms
+    EXPECT_EQ(ui.processTouchSample(makeTalkPress(), 1000), TouchAction::TALK_TOGGLE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1020), TouchAction::NONE);
+
+    // Transition vers LISTENING puis STOP apres 50 ms (t=1050 ms) : DOIT etre accepte !
+    vm.state = JournalState::LISTENING;
+    ui.updateView(vm);
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(), 1050), TouchAction::STOP);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1070), TouchAction::NONE);
+
+    // Nouveau PARLER a t=1300 ms puis STOP apres 100 ms (t=1400 ms) : DOIT etre accepte !
+    vm.state = JournalState::READY;
+    ui.updateView(vm);
+    EXPECT_EQ(ui.processTouchSample(makeTalkPress(), 1300), TouchAction::TALK_TOGGLE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1330), TouchAction::NONE);
+
+    vm.state = JournalState::LISTENING;
+    ui.updateView(vm);
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(), 1400), TouchAction::STOP);
+}
+
+void test_ui_talk_debounce_rejects_second_talk_50ms_later() {
+    JournalUI ui;
+    JournalViewModel vm;
+    vm.state = JournalState::READY;
+    ui.begin(vm);
+
+    EXPECT_EQ(ui.processTouchSample(makeTalkPress(), 1000), TouchAction::TALK_TOGGLE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1020), TouchAction::NONE);
+
+    // Second PARLER apres 50 ms (t=1050 ms < 180 ms) : rejete par anti-rebond
+    vm.state = JournalState::LISTENING;
+    ui.updateView(vm);
+    EXPECT_EQ(ui.processTouchSample(makeTalkPress(), 1050), TouchAction::NONE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1070), TouchAction::NONE);
+
+    // Apres 180 ms (t=1180 ms) : accepte
+    EXPECT_EQ(ui.processTouchSample(makeTalkPress(), 1180), TouchAction::TALK_TOGGLE);
+}
+
+void test_ui_stop_held_emits_single_event_and_available_in_all_active_states() {
+    JournalUI ui;
+    JournalViewModel vm;
+    vm.state = JournalState::SPEAKING;
+    ui.begin(vm);
+
+    // Maintien prolonge sur STOP : un seul evenement
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(true), 2000), TouchAction::STOP);
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(false), 2020), TouchAction::NONE);
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(false), 2100), TouchAction::NONE);
+    EXPECT_EQ(ui.processTouchSample(makeStopPress(false), 2500), TouchAction::NONE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 2550), TouchAction::NONE);
+
+    // STOP disponible dans LISTENING, TRANSCRIBING, ANALYZING et SPEAKING
+    const JournalState states[] = {
+        JournalState::LISTENING,
+        JournalState::TRANSCRIBING,
+        JournalState::ANALYZING,
+        JournalState::SPEAKING
+    };
+    uint32_t t = 3000;
+    for (JournalState st : states) {
+        vm.state = st;
+        ui.updateView(vm);
+        EXPECT_EQ(ui.processTouchSample(makeStopPress(true), t), TouchAction::STOP);
+        EXPECT_EQ(ui.processTouchSample(makeRelease(), t + 10), TouchAction::NONE);
+        t += 50;
+    }
+
+    // PARLER desactive pendant TRANSCRIBING, ANALYZING, SPEAKING, DISCONNECTED
+    const JournalState disabledTalkStates[] = {
+        JournalState::TRANSCRIBING,
+        JournalState::ANALYZING,
+        JournalState::SPEAKING,
+        JournalState::DISCONNECTED
+    };
+    for (JournalState st : disabledTalkStates) {
+        vm.state = st;
+        ui.updateView(vm);
+        EXPECT_EQ(ui.processTouchSample(makeTalkPress(), t), TouchAction::NONE);
+        EXPECT_EQ(ui.processTouchSample(makeRelease(), t + 10), TouchAction::NONE);
+        t += 250;
+    }
+}
+
+// =============================================================================
+// 4. Tests VoiceController (regression + Correction 3)
 // =============================================================================
 
 void test_controller_partial_vs_final_and_single_execution() {
@@ -260,21 +615,17 @@ void test_controller_partial_vs_final_and_single_execution() {
     engine.simulateReady();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
 
-    // 1er clic PARLER
     EXPECT_TRUE(ctrl.onTalkButtonPressed(1100));
     EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
     const uint32_t turn1 = engine.activeTurnId;
 
-    // Transcription partielle : aucune note ajoutee
     engine.simulateTranscription("Note, prototype", false, turn1);
     ctrl.update(1200);
     EXPECT_EQ(storage.count(), static_cast<size_t>(0));
 
-    // 2e clic TERMINER
     EXPECT_TRUE(ctrl.onTalkButtonPressed(1500));
     EXPECT_EQ(ctrl.getState(), JournalState::TRANSCRIBING);
 
-    // Transcription finale : une seule execution
     engine.simulateTranscription("Note, le prototype redémarre", true, turn1);
     ctrl.update(1600);
     EXPECT_EQ(storage.count(), static_cast<size_t>(1));
@@ -287,12 +638,13 @@ void test_controller_partial_vs_final_and_single_execution() {
     EXPECT_EQ(storage.count(), static_cast<size_t>(1));
 }
 
-void test_controller_stop_invalidates_turn_and_preserves_notes() {
+void test_controller_stop_during_listening() {
     setMockMillis(2000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
     EXPECT_TRUE(storage.addNote("Note existante"));
+    const size_t nvsOpsBefore = store.writeOpsCount;
 
     CommandRouter router;
     MockVoiceEngine engine;
@@ -300,26 +652,65 @@ void test_controller_stop_invalidates_turn_and_preserves_notes() {
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    // Demarrer capture puis appuyer sur STOP
     EXPECT_TRUE(ctrl.onTalkButtonPressed(2100));
+    EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
     const uint32_t cancelledTurn = engine.activeTurnId;
-    ctrl.onStopButtonPressed(2200);
+
+    ctrl.onStopButtonPressed(2150);
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.cancelListeningCalls, 1);
+    EXPECT_EQ(engine.stopCalls, 0); // Pas d'appel stop() redondant apres cancelListening()
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
 
     // Transcription tardive appartenant au tour annule : ignoree
     engine.simulateTranscription("Note, parasite apres STOP", true, cancelledTurn);
-    ctrl.update(2300);
-
-    // Les notes existantes sont intactes et aucune note parasite n'a ete ajoutee
+    ctrl.update(2200);
     EXPECT_EQ(storage.count(), static_cast<size_t>(1));
     EXPECT_EQ(storage.getLastNote(), "Note existante");
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
 }
 
-void test_controller_reconnect_does_not_replay_command() {
+void test_controller_stop_during_transcribing_and_late_final() {
+    setMockMillis(2500);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    const size_t nvsOpsBefore = store.writeOpsCount;
+
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(2600));
+    const uint32_t turn1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(2700));
+    EXPECT_EQ(ctrl.getState(), JournalState::TRANSCRIBING);
+
+    // STOP pendant TRANSCRIBING
+    ctrl.onStopButtonPressed(2750);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.cancelListeningCalls, 1);
+    EXPECT_EQ(engine.stopCalls, 0);
+    EXPECT_EQ(engine.listenCalls, 1); // Ne redemarre pas l'ecoute automatiquement
+
+    // Ancienne transcription finale arrivant apres STOP : strictement refusee
+    engine.simulateTranscription("Note, ne doit jamais etre ecrite", true, turn1);
+    ctrl.update(2800);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(0));
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
+    EXPECT_EQ(engine.sayCalls, 0);
+}
+
+void test_controller_stop_during_analyzing_and_late_ai_response() {
     setMockMillis(3000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Mesure 1 : 25 C"));
+    const size_t nvsOpsBefore = store.writeOpsCount;
+
     CommandRouter router;
     MockVoiceEngine engine;
     VoiceController ctrl(engine, storage, router);
@@ -327,28 +718,69 @@ void test_controller_reconnect_does_not_replay_command() {
     engine.simulateReady();
 
     EXPECT_TRUE(ctrl.onTalkButtonPressed(3100));
-    const uint32_t turn = engine.activeTurnId;
+    const uint32_t turn1 = engine.activeTurnId;
     EXPECT_TRUE(ctrl.onTalkButtonPressed(3200));
-    engine.simulateTranscription("Note, premiere note", true, turn);
+    engine.simulateTranscription("Fais le bilan", true, turn1);
     ctrl.update(3300);
-    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
-    engine.simulateSpeechFinished();
+    EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+    EXPECT_TRUE(ctrl.isAiAnalysisActive());
 
-    // Deconnexion puis reconnexion
-    engine.simulateDisconnect();
-    EXPECT_EQ(ctrl.getState(), JournalState::DISCONNECTED);
-    EXPECT_FALSE(ctrl.onTalkButtonPressed(3400)); // Refuse hors ligne
-
-    engine.simulateReady();
-    ctrl.update(3500);
+    // STOP pendant ANALYZING
+    ctrl.onStopButtonPressed(3350);
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
-    // Aucune re-execution de la commande precedente
-    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
-    EXPECT_EQ(engine.sayCalls, 1);
+    EXPECT_FALSE(ctrl.isAiAnalysisActive());
+    EXPECT_EQ(engine.stopCalls, 1);
+    EXPECT_EQ(engine.cancelListeningCalls, 0);
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
+
+    // Demarrer une nouvelle capture puis recevoir une ancienne reponse IA tardive
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(3500));
+    EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
+
+    engine.simulateAssistantText("Ancienne synthese obsolete");
+    engine.simulateSpeechStarted();
+    ctrl.update(3550);
+
+    // L'ancienne reponse ne doit ni ecraser l'affichage ni perturber LISTENING
+    EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
+    EXPECT_TRUE(ctrl.getViewModel().lastTranscript != "Ancienne synthese obsolete");
+    EXPECT_EQ(engine.sayCalls, 0);
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
 }
 
-void test_controller_rejects_concurrent_requests() {
-    setMockMillis(4000);
+void test_controller_stop_during_speaking() {
+    setMockMillis(3800);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Note a lire"));
+    const size_t nvsOpsBefore = store.writeOpsCount;
+
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(3900));
+    const uint32_t turn1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(4000));
+    engine.simulateTranscription("Lis la dernière note", true, turn1);
+    ctrl.update(4100);
+    EXPECT_EQ(ctrl.getState(), JournalState::SPEAKING);
+    EXPECT_EQ(engine.sayCalls, 1);
+
+    // STOP pendant SPEAKING
+    ctrl.onStopButtonPressed(4150);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.stopCalls, 1);
+    EXPECT_EQ(engine.cancelListeningCalls, 0);
+    EXPECT_EQ(ctrl.pendingSpeechCount(), static_cast<size_t>(0));
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
+}
+
+void test_controller_stop_then_talk_and_async_release() {
+    setMockMillis(4500);
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
@@ -358,15 +790,124 @@ void test_controller_rejects_concurrent_requests() {
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(4100)); // LISTENING
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(4200)); // TERMINER -> TRANSCRIBING
-    // Pendant TRANSCRIBING, un nouveau clic PARLER doit etre refuse
-    EXPECT_FALSE(ctrl.onTalkButtonPressed(4300));
+    // Simuler un moteur qui ne libere le micro que de facon asynchrone
+    engine.deferReadyAfterCancel = true;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(4600));
+    EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
+
+    ctrl.onStopButtonPressed(4650);
+    // Tant que le moteur n'est pas reellement READY, on reste en STOPPING et PARLER est refuse
+    EXPECT_EQ(ctrl.getState(), JournalState::STOPPING);
+    EXPECT_FALSE(ctrl.onTalkButtonPressed(4700));
+
+    // Le moteur confirme enfin READY
+    engine.deferReadyAfterCancel = false;
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Nouvelle capture apres STOP reussit pleinement
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(4800));
+    const uint32_t turn2 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(4900));
+    engine.simulateTranscription("Note, nouvelle capture valide", true, turn2);
+    ctrl.update(5000);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_EQ(storage.getLastNote(), "nouvelle capture valide");
+}
+
+void test_controller_two_consecutive_stops_idempotent() {
+    setMockMillis(5200);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Conservee"));
+    const size_t nvsOpsBefore = store.writeOpsCount;
+
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(5300));
+    ctrl.onStopButtonPressed(5350);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.cancelListeningCalls, 1);
+    EXPECT_EQ(engine.stopCalls, 0);
+
+    // Second STOP immediat : aucun nouvel appel moteur, aucune ecriture NVS
+    ctrl.onStopButtonPressed(5400);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.cancelListeningCalls, 1);
+    EXPECT_EQ(engine.stopCalls, 0);
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBefore);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+}
+
+void test_controller_stop_then_reconnect_preserves_nvs_and_no_replay() {
+    setMockMillis(6000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // Enregistrer une premiere note
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(6100));
+    const uint32_t turn1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(6200));
+    engine.simulateTranscription("Note, premiere note", true, turn1);
+    ctrl.update(6300);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_EQ(engine.sayCalls, 1);
+    engine.simulateSpeechFinished();
+
+    // Demarrer une 2e capture, STOP, puis deconnexion et reconnexion
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(6400));
+    const uint32_t cancelledTurn = engine.activeTurnId;
+    ctrl.onStopButtonPressed(6450);
+
+    const size_t nvsOpsBeforeDisconnect = store.writeOpsCount;
+    engine.simulateDisconnect();
+    EXPECT_EQ(ctrl.getState(), JournalState::DISCONNECTED);
+    EXPECT_FALSE(ctrl.onTalkButtonPressed(6500)); // PARLER desactive hors ligne
+
+    engine.simulateReady();
+    ctrl.update(6600);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Une transcription tardive du tour annule avant deconnexion reste refusee
+    engine.simulateTranscription("Note, fantome apres reconnexion", true, cancelledTurn);
+    ctrl.update(6700);
+
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_EQ(storage.getLastNote(), "premiere note");
+    EXPECT_EQ(engine.sayCalls, 1); // Aucune repetition TTS
+    EXPECT_EQ(store.writeOpsCount, nvsOpsBeforeDisconnect);
+}
+
+void test_controller_rejects_concurrent_requests() {
+    setMockMillis(7000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(7100)); // LISTENING
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(7200)); // TERMINER -> TRANSCRIBING
+    EXPECT_FALSE(ctrl.onTalkButtonPressed(7300));
     EXPECT_EQ(engine.listenCalls, 1);
 }
 
 void test_controller_ai_analysis_prompt_and_no_double_say() {
-    setMockMillis(5000);
+    setMockMillis(8000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
@@ -379,30 +920,29 @@ void test_controller_ai_analysis_prompt_and_no_double_say() {
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(5100));
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(8100));
     const uint32_t turn = engine.activeTurnId;
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(5200));
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(8200));
     engine.simulateTranscription("Fais le bilan", true, turn);
-    ctrl.update(5300);
+    ctrl.update(8300);
 
     EXPECT_EQ(engine.askAiCalls, 1);
-    EXPECT_EQ(engine.sayCalls, 0); // Pas de say() sur une reponse IA
+    EXPECT_EQ(engine.sayCalls, 0);
     EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
     EXPECT_TRUE(engine.aiPrompts[0].indexOf("<OBSERVATIONS_UTILISATEUR>") >= 0);
     EXPECT_TRUE(engine.aiPrompts[0].indexOf("Température 42°C") >= 0);
 
-    // Reception du texte assistant : mise a jour affichage uniquement, pas de say()
     engine.simulateAssistantText("Synthèse : température mesurée à 42°C.");
-    ctrl.update(5400);
+    ctrl.update(8400);
     EXPECT_EQ(engine.sayCalls, 0);
-    EXPECT_EQ(storage.count(), static_cast<size_t>(2)); // Aucune modification des notes
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
 
     engine.simulateSpeechFinished();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
 }
 
-void test_controller_transcription_timeout_recovers() {
-    setMockMillis(6000);
+void test_controller_transcription_timeout_then_new_capture() {
+    setMockMillis(9000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
     EXPECT_TRUE(storage.begin());
@@ -412,40 +952,118 @@ void test_controller_transcription_timeout_recovers() {
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(6100));
-    EXPECT_TRUE(ctrl.onTalkButtonPressed(6200));
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(9100));
+    const uint32_t timedOutTurn = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(9200));
     EXPECT_EQ(ctrl.getState(), JournalState::TRANSCRIBING);
 
     // Avancer au-dela du watchdog transcription (8000 ms)
-    setMockMillis(6200 + AppConfig::TRANSCRIPTION_WATCHDOG_MS + 100);
+    setMockMillis(9200 + AppConfig::TRANSCRIPTION_WATCHDOG_MS + 100);
     ctrl.update(millis());
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
     EXPECT_EQ(engine.cancelListeningCalls, 1);
+
+    // Ancienne transcription du tour expire : ignoree
+    engine.simulateTranscription("Note, expiree", true, timedOutTurn);
+    ctrl.update(millis() + 50);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(0));
+
+    // Nouvelle capture apres timeout : fonctionne normalement
+    const uint32_t tNew = millis() + 200;
+    setMockMillis(tNew);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tNew));
+    const uint32_t turn2 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tNew + 100));
+    engine.simulateTranscription("Note, capture apres timeout", true, turn2);
+    ctrl.update(tNew + 200);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_EQ(storage.getLastNote(), "capture apres timeout");
+}
+
+void test_controller_ai_and_tts_watchdogs_recover() {
+    setMockMillis(20000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Obs unique"));
+
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // 1. Timeout IA
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(20100));
+    const uint32_t t1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(20200));
+    engine.simulateTranscription("Fais le bilan", true, t1);
+    ctrl.update(20300);
+    EXPECT_EQ(ctrl.getState(), JournalState::ANALYZING);
+
+    setMockMillis(20300 + AppConfig::AI_RESPONSE_TIMEOUT_MS + 100);
+    ctrl.update(millis());
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_FALSE(ctrl.isAiAnalysisActive());
+    EXPECT_EQ(engine.stopCalls, 1);
+
+    // 2. Timeout TTS
+    const uint32_t tBase = millis() + 200;
+    setMockMillis(tBase);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tBase));
+    const uint32_t t2 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tBase + 100));
+    engine.simulateTranscription("Combien de notes", true, t2);
+    ctrl.update(tBase + 200);
+    EXPECT_EQ(ctrl.getState(), JournalState::SPEAKING);
+
+    setMockMillis(tBase + 200 + AppConfig::TTS_WATCHDOG_MS + 100);
+    ctrl.update(millis());
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.stopCalls, 2);
 }
 
 } // namespace
 
 int main() {
-    std::printf("=== VoiceJournal v0.1.0 — Tests unitaires natifs C++17 ===\n");
+    std::printf("=== VoiceJournal v0.1.0.1 Corrective — Tests unitaires natifs C++17 ===\n");
 
+    // 1. JournalStorage
     runTest("JournalStorage: carnet initialement vide", test_storage_initially_empty);
     runTest("JournalStorage: 1, 5 puis 6 notes (rotation circulaire + ordre)", test_storage_add_one_and_five_and_sixth_circular);
     runTest("JournalStorage: rejet vide et > 180 octets", test_storage_rejects_empty_and_too_long);
     runTest("JournalStorage: preservation UTF-8 et troncature sure", test_storage_utf8_preservation_and_safe_truncation);
     runTest("JournalStorage: reprise apres redemarrage simule", test_storage_simulated_reboot_persistence);
-    runTest("JournalStorage: echec simule d'ecriture NVS", test_storage_simulated_write_failure);
-    runTest("JournalStorage: effacement persistant", test_storage_clear_persists);
+    runTest("JournalStorage: echecs cibles note, head et count", test_storage_simulated_write_failures_targeted);
+    runTest("JournalStorage: clear persistant et controle remove()", test_storage_clear_persists_and_checks_remove_failure);
+    runTest("JournalStorage: coupure simulee a chaque etape de addNote()", test_storage_power_cut_every_step_add_note);
+    runTest("JournalStorage: coupure simulee a chaque etape de clear()", test_storage_power_cut_every_step_clear);
+    runTest("JournalStorage: echec begin() et diagnostic corruption", test_storage_begin_failure_and_corruption_diagnostic);
+    runTest("JournalStorage: migration v0.1.0 -> v0.1.0.1 (5 notes en rotation)", test_storage_migration_from_v010_five_notes_rotated);
 
+    // 2. CommandRouter
     runTest("CommandRouter: prefixe NOTE, casse et rejet vide/milieu", test_router_note_prefix_and_variants);
     runTest("CommandRouter: commandes obligatoires, casse et accents", test_router_mandatory_commands_case_and_accents);
     runTest("CommandRouter: confirmation CLEAR, annulation et expiration", test_router_clear_confirmation_cancel_and_expiration);
 
+    // 3. JournalUI
+    runTest("JournalUI: STOP prioritaire 50 ms et 100 ms apres PARLER", test_ui_stop_priority_50ms_and_100ms_after_talk);
+    runTest("JournalUI: anti-rebond PARLER rejette un second PARLER a 50 ms", test_ui_talk_debounce_rejects_second_talk_50ms_later);
+    runTest("JournalUI: STOP maintenu (1 evenement) et actif dans tous les etats", test_ui_stop_held_emits_single_event_and_available_in_all_active_states);
+
+    // 4. VoiceController
     runTest("VoiceController: partiel vs final et execution unique", test_controller_partial_vs_final_and_single_execution);
-    runTest("VoiceController: STOP invalide le tour et preserve les notes", test_controller_stop_invalidates_turn_and_preserves_notes);
-    runTest("VoiceController: reconnexion sans repetition de commande", test_controller_reconnect_does_not_replay_command);
+    runTest("VoiceController: STOP pendant LISTENING sans stop() redondant", test_controller_stop_during_listening);
+    runTest("VoiceController: STOP pendant TRANSCRIBING + finale tardive refusee", test_controller_stop_during_transcribing_and_late_final);
+    runTest("VoiceController: STOP pendant ANALYZING + reponse IA tardive refusee", test_controller_stop_during_analyzing_and_late_ai_response);
+    runTest("VoiceController: STOP pendant SPEAKING", test_controller_stop_during_speaking);
+    runTest("VoiceController: STOP puis PARLER + liberation asynchrone moteur", test_controller_stop_then_talk_and_async_release);
+    runTest("VoiceController: deux STOP successifs idempotents", test_controller_two_consecutive_stops_idempotent);
+    runTest("VoiceController: STOP puis reconnexion sans rejeu et NVS intact", test_controller_stop_then_reconnect_preserves_nvs_and_no_replay);
     runTest("VoiceController: refus des requetes concurrentes", test_controller_rejects_concurrent_requests);
     runTest("VoiceController: analyse IA bornee sans double say()", test_controller_ai_analysis_prompt_and_no_double_say);
-    runTest("VoiceController: timeout transcription sans blocage", test_controller_transcription_timeout_recovers);
+    runTest("VoiceController: timeout transcription puis nouvelle capture", test_controller_transcription_timeout_then_new_capture);
+    runTest("VoiceController: watchdogs IA et TTS recuperables", test_controller_ai_and_tts_watchdogs_recover);
 
     std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;

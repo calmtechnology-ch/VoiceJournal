@@ -46,9 +46,15 @@ public:
         ++cancelListeningCalls;
         listening = false;
         transcribing = false;
-        busy = false;
         activeTurnId = 0;
         pendingTurnId = 0;
+        if (deferReadyAfterCancel) {
+            busy = true;
+            state = VoiceEngineState::STOPPED;
+            if (onStateChangedCb) onStateChangedCb(state);
+            return;
+        }
+        busy = false;
         if (ready) {
             state = VoiceEngineState::READY;
             if (onStateChangedCb) onStateChangedCb(state);
@@ -163,6 +169,13 @@ public:
         if (onAssistantTextCb) onAssistantTextCb(text);
     }
 
+    void simulateSpeechStarted() {
+        busy = true;
+        state = VoiceEngineState::SPEAKING;
+        if (onStateChangedCb) onStateChangedCb(state);
+        if (onSpeechStartedCb) onSpeechStartedCb();
+    }
+
     bool ready = false;
     bool busy = false;
     bool listening = false;
@@ -170,6 +183,7 @@ public:
     bool rejectListen = false;
     bool failSay = false;
     bool failAskAi = false;
+    bool deferReadyAfterCancel = false;
 
     VoiceEngineState state = VoiceEngineState::UNINITIALIZED;
     String lastError;

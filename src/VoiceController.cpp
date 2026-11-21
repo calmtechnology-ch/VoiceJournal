@@ -24,19 +24,29 @@ VoiceController::VoiceController(IVoiceEngine& engine,
 void VoiceController::attachCallbacks() {
     engine_.onReady([this]() {
         logLine("[VJ][VOICE]", "READY");
-        // Une reconnexion ne doit JAMAIS redeclencher une ancienne commande ou transcription
+        // Une reconnexion ne doit JAMAIS redeclencher une ancienne commande, transcription ou TTS
         invalidateCurrentTurn();
+        router_.cancelClearConfirmation();
+        view_.clearConfirmPending = false;
         aiRequestActive_ = false;
+        ttsPlaybackActive_ = false;
         ttsQueue_.clear();
-        view_.connected = true;
-        setStatusMessage("Pret. Appuyez sur PARLER.");
-        setState(JournalState::READY);
+
+        // Ne passer a READY qu'apres confirmation de l'etat reel du moteur
+        if (engine_.isReady()) {
+            view_.connected = true;
+            setStatusMessage("Pret. Appuyez sur PARLER.");
+            setState(JournalState::READY);
+        } else {
+            transitionToEngineActualState();
+        }
     });
 
     engine_.onError([this](const String& err) {
         Serial.printf("[VJ][ERROR] VoiceKit: %s\n", err.c_str());
         invalidateCurrentTurn();
         aiRequestActive_ = false;
+        ttsPlaybackActive_ = false;
         ttsQueue_.clear();
         setStatusMessage(err.length() > 0 ? err : String("Erreur moteur vocal"));
         setState(JournalState::ERROR_STATE);
@@ -57,30 +67,38 @@ void VoiceController::attachCallbacks() {
             case VoiceEngineState::DISCONNECTED:
                 view_.connected = false;
                 invalidateCurrentTurn();
+                router_.cancelClearConfirmation();
+                view_.clearConfirmPending = false;
                 aiRequestActive_ = false;
+                ttsPlaybackActive_ = false;
                 ttsQueue_.clear();
                 setStatusMessage("Deconnecte - notes conservees");
                 setState(JournalState::DISCONNECTED);
                 break;
 
             case VoiceEngineState::READY:
-                view_.connected = true;
-                if (state_ == JournalState::CONNECTING ||
-                    state_ == JournalState::INITIALIZING ||
-                    state_ == JournalState::DISCONNECTED ||
-                    state_ == JournalState::STOPPING ||
-                    state_ == JournalState::SPEAKING ||
-                    state_ == JournalState::ANALYZING) {
-                    aiRequestActive_ = false;
-                    setState(JournalState::READY);
+                if (engine_.isReady()) {
+                    view_.connected = true;
+                    if (state_ == JournalState::CONNECTING ||
+                        state_ == JournalState::INITIALIZING ||
+                        state_ == JournalState::DISCONNECTED ||
+                        state_ == JournalState::STOPPING ||
+                        state_ == JournalState::SPEAKING ||
+                        state_ == JournalState::ANALYZING) {
+                        aiRequestActive_ = false;
+                        ttsPlaybackActive_ = false;
+                        setState(JournalState::READY);
+                    }
                 }
                 break;
 
             case VoiceEngineState::SPEAKING:
-                if (state_ == JournalState::ANALYZING) {
-                    // Reste visuellement en ANALYSE IA ou REPONSE AUDIO pendant la reponse Gemini
-                    setState(JournalState::SPEAKING);
-                } else if (state_ != JournalState::STOPPING) {
+                // Ignorer tout evenement SPEAKING tardif d'une requete annulee
+                // ou pendant une nouvelle capture micro / transcription
+                if ((aiRequestActive_ || ttsPlaybackActive_) &&
+                    state_ != JournalState::STOPPING &&
+                    state_ != JournalState::LISTENING &&
+                    state_ != JournalState::TRANSCRIBING) {
                     setState(JournalState::SPEAKING);
                 }
                 break;
@@ -88,6 +106,7 @@ void VoiceController::attachCallbacks() {
             case VoiceEngineState::ERROR_STATE:
                 invalidateCurrentTurn();
                 aiRequestActive_ = false;
+                ttsPlaybackActive_ = false;
                 ttsQueue_.clear();
                 setState(JournalState::ERROR_STATE);
                 break;
@@ -123,7 +142,7 @@ void VoiceController::attachCallbacks() {
         }
 
         if (turnId != 0) {
-            if (turnId == invalidatedTurnId_ || turnId == lastProcessedTurnId_) {
+            if (turnId <= maxInvalidatedTurnId_ || turnId == lastProcessedTurnId_) {
                 Serial.printf("[VJ][STT] Transcription obsolete ignoree (turnId=%u)\n",
                               static_cast<unsigned>(turnId));
                 return;
@@ -155,9 +174,7 @@ void VoiceController::attachCallbacks() {
         if (trimmed.length() == 0) {
             logLine("[VJ][STT]", "Transcription finale vide ignoree");
             setStatusMessage("Aucune parole valide detectee");
-            if (engine_.isReady()) {
-                setState(JournalState::READY);
-            }
+            transitionToEngineActualState();
             return;
         }
 
@@ -168,7 +185,7 @@ void VoiceController::attachCallbacks() {
 
     engine_.onAssistantText([this](const String& text) {
         if (!aiRequestActive_) {
-            // Ignorer tout texte tardif d'une requete annulee
+            // Ignorer tout texte tardif d'une requete annulee ou apres nouvelle capture
             return;
         }
         if (text.length() > 0) {
@@ -177,7 +194,10 @@ void VoiceController::attachCallbacks() {
     });
 
     engine_.onSpeechStarted([this]() {
-        if (state_ != JournalState::STOPPING) {
+        if ((aiRequestActive_ || ttsPlaybackActive_) &&
+            state_ != JournalState::STOPPING &&
+            state_ != JournalState::LISTENING &&
+            state_ != JournalState::TRANSCRIBING) {
             setState(JournalState::SPEAKING);
         }
     });
@@ -187,12 +207,9 @@ void VoiceController::attachCallbacks() {
             logLine("[VJ][AI]", "Restitution analyse terminee");
             aiRequestActive_ = false;
         }
+        ttsPlaybackActive_ = false;
         if (state_ == JournalState::SPEAKING || state_ == JournalState::ANALYZING) {
-            if (engine_.isReady()) {
-                setState(JournalState::READY);
-            } else if (engine_.getState() == VoiceEngineState::DISCONNECTED) {
-                setState(JournalState::DISCONNECTED);
-            }
+            transitionToEngineActualState();
         }
     });
 
@@ -207,21 +224,46 @@ void VoiceController::notifyInitError(const String& reason) {
 }
 
 void VoiceController::invalidateCurrentTurn() {
-    if (expectedTurnId_ != 0) {
-        invalidatedTurnId_ = expectedTurnId_;
-    } else {
+    uint32_t candidateId = expectedTurnId_;
+    if (candidateId == 0) {
         const uint32_t activeId = engine_.getActiveCaptureTurnId();
         const uint32_t pendingId = engine_.getPendingTranscriptionTurnId();
         if (activeId != 0) {
-            invalidatedTurnId_ = activeId;
+            candidateId = activeId;
         } else if (pendingId != 0) {
-            invalidatedTurnId_ = pendingId;
+            candidateId = pendingId;
         }
+    }
+    if (candidateId > maxInvalidatedTurnId_) {
+        maxInvalidatedTurnId_ = candidateId;
     }
     expectedTurnId_ = 0;
     captureSessionOpen_ = false;
     hasPendingFinal_ = false;
     pendingFinalText_ = "";
+}
+
+void VoiceController::transitionToEngineActualState() {
+    if (engine_.isReady()) {
+        view_.connected = true;
+        setState(JournalState::READY);
+        return;
+    }
+
+    const VoiceEngineState es = engine_.getState();
+    if (es == VoiceEngineState::DISCONNECTED || es == VoiceEngineState::UNINITIALIZED) {
+        view_.connected = false;
+        setState(JournalState::DISCONNECTED);
+    } else if (es == VoiceEngineState::CONNECTING_WIFI || es == VoiceEngineState::CONNECTING_SERVICE) {
+        view_.connected = false;
+        setState(JournalState::CONNECTING);
+    } else if (es == VoiceEngineState::ERROR_STATE) {
+        setState(JournalState::ERROR_STATE);
+    } else {
+        // Moteur encore occupe / liberation asynchrone en cours :
+        // rester en STOPPING (PARLER desactive) jusqu'a confirmation READY reelle
+        setState(JournalState::STOPPING);
+    }
 }
 
 void VoiceController::setState(JournalState newState) {
@@ -288,6 +330,9 @@ bool VoiceController::onTalkButtonPressed(uint32_t nowMs) {
 }
 
 bool VoiceController::startListeningSession(uint32_t nowMs) {
+    // Toute nouvelle capture invalide toute attente de reponse IA ou TTS anterieure
+    aiRequestActive_ = false;
+    ttsPlaybackActive_ = false;
     captureSessionOpen_ = true;
     expectedTurnId_ = 0;
     hasPendingFinal_ = false;
@@ -302,7 +347,7 @@ bool VoiceController::startListeningSession(uint32_t nowMs) {
         Serial.printf("[VJ][ERROR] listen() refuse : %s\n", err.c_str());
         setStatusMessage(err);
         if (!engine_.isReady()) {
-            setState(JournalState::DISCONNECTED);
+            transitionToEngineActualState();
         }
         return false;
     }
@@ -363,8 +408,19 @@ bool VoiceController::finishListeningSession(uint32_t nowMs) {
 }
 
 void VoiceController::onStopButtonPressed(uint32_t nowMs) {
-    (void)nowMs;
     logLine("[VJ][STOP]", "Interruption demandee");
+
+    const bool wasCapture =
+        (state_ == JournalState::LISTENING ||
+         state_ == JournalState::TRANSCRIBING ||
+         engine_.isListening() ||
+         engine_.isTranscribing());
+    const bool wasPlaybackOrAi =
+        (state_ == JournalState::ANALYZING ||
+         state_ == JournalState::SPEAKING ||
+         aiRequestActive_ ||
+         ttsPlaybackActive_ ||
+         (!wasCapture && engine_.isBusy()));
 
     // 1. Invalider le tour STT en cours et toute transcription en attente
     invalidateCurrentTurn();
@@ -379,32 +435,27 @@ void VoiceController::onStopButtonPressed(uint32_t nowMs) {
         view_.clearConfirmPending = false;
     }
 
-    // 3. Vider la file TTS locale et annuler toute requete IA en cours
+    // 3. Vider la file TTS locale et annuler toute requete IA / restitution en cours
     ttsQueue_.clear();
     aiRequestActive_ = false;
+    ttsPlaybackActive_ = false;
 
-    // 4. Interrompre le micro et la restitution audio sans toucher aux notes NVS
-    setState(JournalState::STOPPING);
+    // 4. Interrompre uniquement l'operation active sans provoquer d'appels d'arret
+    //    redondants (evite d'effacer _cancelledCaptureTurnId ou de perturber la session VoiceKit)
+    if (wasCapture || wasPlaybackOrAi) {
+        setState(JournalState::STOPPING);
 
-    if (engine_.isListening() || engine_.isTranscribing()) {
-        engine_.cancelListening();
+        if (wasCapture) {
+            engine_.cancelListening();
+        } else {
+            engine_.stop();
+        }
     }
-    engine_.stop();
 
     setStatusMessage("Operation interrompue.");
 
-    // 5. Retourner a un etat utilisable selon l'etat reel du moteur
-    if (engine_.isReady()) {
-        setState(JournalState::READY);
-    } else if (engine_.getState() == VoiceEngineState::DISCONNECTED) {
-        setState(JournalState::DISCONNECTED);
-    } else if (engine_.getState() == VoiceEngineState::CONNECTING_WIFI ||
-               engine_.getState() == VoiceEngineState::CONNECTING_SERVICE) {
-        setState(JournalState::CONNECTING);
-    } else {
-        // Si le moteur retourne a READY de maniere asynchrone, onStateChanged mettra a jour
-        setState(JournalState::STOPPING);
-    }
+    // 5. Ne revenir a READY qu'apres confirmation de l'etat reel du moteur
+    transitionToEngineActualState();
 }
 
 void VoiceController::update(uint32_t nowMs) {
@@ -617,13 +668,15 @@ void VoiceController::pumpSpeechQueue(uint32_t nowMs) {
     ttsQueue_.pop_front(); // Consommer une seule fois : pas de boucle infinie en cas d'echec
 
     if (engine_.say(nextSpeech)) {
+        ttsPlaybackActive_ = true;
         setState(JournalState::SPEAKING);
     } else {
+        ttsPlaybackActive_ = false;
         Serial.printf("[VJ][ERROR] Echec say(): %s\n", engine_.getLastError().c_str());
         setStatusMessage("Restitution vocale indisponible.");
         // Rester dans un etat coherent sans re-enfiler
         if (!engine_.isReady()) {
-            setState(JournalState::DISCONNECTED);
+            transitionToEngineActualState();
         }
     }
 }
@@ -644,7 +697,7 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
         invalidateCurrentTurn();
         engine_.cancelListening();
         setStatusMessage("Timeout transcription.");
-        setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+        transitionToEngineActualState();
         return;
     }
 
@@ -653,9 +706,10 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
         (nowMs - stateEnteredAtMs_) >= AppConfig::AI_RESPONSE_TIMEOUT_MS) {
         logLine("[VJ][AI]", "Timeout reponse analyse IA");
         aiRequestActive_ = false;
+        ttsPlaybackActive_ = false;
         engine_.stop();
         setStatusMessage("Timeout analyse IA.");
-        setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+        transitionToEngineActualState();
         return;
     }
 
@@ -664,15 +718,23 @@ void VoiceController::handleWatchdogs(uint32_t nowMs) {
         (nowMs - stateEnteredAtMs_) >= AppConfig::TTS_WATCHDOG_MS) {
         logLine("[VJ][VOICE]", "Timeout restitution audio");
         aiRequestActive_ = false;
+        ttsPlaybackActive_ = false;
+        ttsQueue_.clear();
         engine_.stop();
         setStatusMessage("Timeout reponse audio.");
-        setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+        transitionToEngineActualState();
         return;
     }
 
-    // 5. Sortie securisee de STOPPING si le moteur est deja pret
-    if (state_ == JournalState::STOPPING && engine_.isReady()) {
-        setState(JournalState::READY);
+    // 5. Sortie securisee de STOPPING uniquement apres confirmation de l'etat reel du moteur
+    if (state_ == JournalState::STOPPING) {
+        if (engine_.isReady()) {
+            view_.connected = true;
+            setState(JournalState::READY);
+        } else if (engine_.getState() == VoiceEngineState::DISCONNECTED) {
+            view_.connected = false;
+            setState(JournalState::DISCONNECTED);
+        }
     }
 }
 

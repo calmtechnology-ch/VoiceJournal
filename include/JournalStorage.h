@@ -15,6 +15,7 @@ public:
     virtual ~IKeyValueStore() = default;
     virtual bool open(const char* ns, bool readOnly) = 0;
     virtual void close() = 0;
+    virtual bool isKey(const char* key) const = 0;
     virtual uint32_t getUInt(const char* key, uint32_t defaultValue = 0) const = 0;
     virtual bool putUInt(const char* key, uint32_t value) = 0;
     virtual String getString(const char* key, const String& defaultValue = "") const = 0;
@@ -26,11 +27,17 @@ public:
  * @class JournalStorage
  * @brief Stockage persistant local des observations dans la NVS ESP32 (namespace "vjournal").
  *
- * Strategie :
- * - Tampon circulaire de AppConfig::MAX_NOTES (5) emplacements ("n0".."n4").
- * - Metadonnees "magic", "head" (index de la plus ancienne note) et "count" (0..5).
- * - Ecriture de la charge utile avant mise a jour des metadonnees pour limiter
- *   les risques de corruption lors d'une coupure d'alimentation.
+ * Strategie v0.1.0.1 (double instantane A/B sans pretendre a une atomicite materielle multi-cles) :
+ * - Deux banques independantes ("a" et "b") contenant chacune les 5 emplacements
+ *   ("a0".."a4" / "b0".."b4"), l'index circulaire ("ah"/"bh"), le compteur ("ac"/"bc"),
+ *   un numero de generation monotone ("ag"/"bg") et un marqueur de validation FNV-1a ("ak"/"bk")
+ *   ecrit EN DERNIER.
+ * - Chaque ecriture (addNote / clear) cible exclusivement la banque inactive apres avoir
+ *   invalide son marqueur de validation, laissant la banque active intacte en cas de coupure.
+ * - Au demarrage (begin), les deux banques sont verifiees ; la banque valide de generation
+ *   la plus elevee est selectionnee.
+ * - Migration automatique et non destructive depuis le format v0.1.0 ("magic" = 0x564A3031,
+ *   "head", "count", "n0".."n4").
  * - Longueur bornee a AppConfig::MAX_NOTE_BYTES (180 octets UTF-8).
  */
 class JournalStorage {
@@ -106,6 +113,21 @@ public:
     const String& getLastError() const { return lastError_; }
 
     /**
+     * @brief Retourne le diagnostic de recuperation ou migration issu du dernier begin().
+     */
+    const String& getRecoveryDiagnostic() const { return recoveryDiagnostic_; }
+
+    /**
+     * @brief Indique la banque active courante (0 = A, 1 = B) pour diagnostic et tests.
+     */
+    uint8_t getActiveBank() const { return activeBank_; }
+
+    /**
+     * @brief Indique la generation courante du dernier instantane valide.
+     */
+    uint32_t getGeneration() const { return generation_; }
+
+    /**
      * @brief Tronque une chaine UTF-8 a au plus maxBytes octets sans jamais
      *        couper au milieu d'une sequence multioctet UTF-8.
      */
@@ -118,12 +140,46 @@ public:
     static bool isValidUtf8Length(const String& text, size_t maxBytes);
 
 private:
-    static constexpr uint32_t kStorageMagic = 0x564A3031UL; // "VJ01"
-    static constexpr const char* kKeyMagic  = "magic";
-    static constexpr const char* kKeyHead   = "head";
-    static constexpr const char* kKeyCount  = "count";
+    // Format v0.1.0 (legacy, conserve en lecture pour migration transparente)
+    static constexpr uint32_t kStorageMagicV1 = 0x564A3031UL; // "VJ01"
+    static constexpr const char* kKeyMagicV1  = "magic";
+    static constexpr const char* kKeyHeadV1   = "head";
+    static constexpr const char* kKeyCountV1  = "count";
 
-    static void formatSlotKey(size_t slot, char* outBuf, size_t bufSize);
+    // Format v0.1.0.1 (double instantane A/B avec marqueur de validation FNV-1a)
+    static constexpr uint32_t kStorageMagicV2 = 0x564A3032UL; // "VJ02"
+    static constexpr const char* kKeyMagicV2  = "v2";
+    static constexpr const char* kKeyActive   = "act";
+
+    struct Snapshot {
+        std::array<String, AppConfig::MAX_NOTES> notes;
+        size_t head = 0;
+        size_t count = 0;
+        uint32_t generation = 0;
+        bool valid = false;
+    };
+
+    static void formatLegacySlotKey(size_t slot, char* outBuf, size_t bufSize);
+    static void formatBankSlotKey(uint8_t bank, size_t slot, char* outBuf, size_t bufSize);
+    static const char* bankHeadKey(uint8_t bank);
+    static const char* bankCountKey(uint8_t bank);
+    static const char* bankGenKey(uint8_t bank);
+    static const char* bankCommitKey(uint8_t bank);
+
+    static bool isSlotActive(size_t slot, size_t head, size_t count);
+    static uint32_t computeChecksum(uint32_t gen,
+                                    size_t head,
+                                    size_t count,
+                                    const std::array<String, AppConfig::MAX_NOTES>& notes);
+
+    bool loadBank(uint8_t bank, Snapshot& outSnapshot) const;
+    bool commitSnapshot(uint8_t bank,
+                        uint32_t gen,
+                        const std::array<String, AppConfig::MAX_NOTES>& notes,
+                        size_t head,
+                        size_t count);
+    bool migrateFromV1();
+    size_t salvageBankNotes(uint8_t bank, std::array<String, AppConfig::MAX_NOTES>& outNotes) const;
 
     IKeyValueStore* store_ = nullptr;
     bool ownsStore_ = false;
@@ -132,5 +188,8 @@ private:
     std::array<String, AppConfig::MAX_NOTES> notes_;
     size_t head_ = 0;
     size_t count_ = 0;
+    uint8_t activeBank_ = 0;
+    uint32_t generation_ = 0;
     String lastError_;
+    String recoveryDiagnostic_;
 };

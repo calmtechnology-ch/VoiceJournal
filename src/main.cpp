@@ -1,9 +1,9 @@
 /**
  * @file main.cpp
- * @brief VoiceJournal v0.1.0 — Carnet de laboratoire vocal intelligent pour M5Stack CoreS3.
+ * @brief VoiceJournal v0.1.0.1 Corrective — Carnet de laboratoire vocal intelligent pour M5Stack CoreS3.
  *
- * Utilise la facade publique <VoiceKit.h> (VoiceKit v0.6.7.2), Preferences (NVS),
- * et M5GFX (sans LVGL 9).
+ * Utilise la facade publique <VoiceKit.h> (VoiceKit rev 16646c73acf01a8d57408391bc6de15a288b8910),
+ * Preferences (NVS), et M5GFX (sans LVGL 9).
  */
 
 #include <Arduino.h>
