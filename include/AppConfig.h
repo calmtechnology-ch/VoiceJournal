@@ -28,7 +28,7 @@ static constexpr uint32_t TRANSCRIPTION_WATCHDOG_MS   = 8000;  // Timeout applic
 static constexpr uint32_t AI_DISPATCH_SETTLE_MS       = 2500;  // Delai de stabilisation post-STT avant askAi() (2,5 s)
 static constexpr uint32_t AI_RESPONSE_TIMEOUT_MS      = 20000; // Timeout reponse analyse IA (20 s)
 static constexpr uint32_t TTS_WATCHDOG_MS             = 20000; // Timeout restitution TTS (20 s)
-static constexpr uint32_t CLEAR_CONFIRM_TIMEOUT_MS    = 15000; // Delai max de confirmation suppression (15 s)
+static constexpr uint32_t CLEAR_CONFIRM_TIMEOUT_MS    = 30000; // Delai max de confirmation suppression (30 s)
 static constexpr uint32_t TOUCH_DEBOUNCE_MS           = 180;   // Anti-rebond tactile (180 ms)
 static constexpr uint32_t PROVIDER_SWITCH_DEBOUNCE_MS = 350;   // Anti-rebond changement de fournisseur IA (350 ms)
 

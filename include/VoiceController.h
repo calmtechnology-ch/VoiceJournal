@@ -190,6 +190,11 @@ public:
                                                        : AiProvider::OPENAI;
     }
 
+    /**
+     * @brief Formate une transcription pour affichage propre (evite les transcriptions criees en tout majuscule).
+     */
+    static String formatDisplayTranscript(const String& raw);
+
 private:
     VoiceKit& voice_;
 };
@@ -296,6 +301,11 @@ public:
      * @brief Nombre d'elements en attente dans la file TTS locale.
      */
     size_t pendingSpeechCount() const { return ttsQueue_.size(); }
+
+    /**
+     * @brief Formate une transcription pour affichage propre (evite les transcriptions criees en tout majuscule).
+     */
+    static String formatDisplayTranscript(const String& raw);
 
 private:
     void setState(JournalState newState);

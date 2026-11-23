@@ -20,14 +20,24 @@ bool CommandRouter::isClearConfirmationPending(uint32_t nowMs) const {
     if (!clearPending_) {
         return false;
     }
-    return (nowMs - clearArmedAtMs_) <= clearConfirmTimeoutMs_;
+    const int32_t diff = static_cast<int32_t>(nowMs - clearArmedAtMs_);
+    if (diff < 0) {
+        // Horodatage futur ou legere avance de millis() dans un callback : non expire
+        return true;
+    }
+    return static_cast<uint32_t>(diff) <= clearConfirmTimeoutMs_;
 }
 
 bool CommandRouter::checkClearConfirmationTimeout(uint32_t nowMs) {
     if (!clearPending_) {
         return false;
     }
-    if ((nowMs - clearArmedAtMs_) > clearConfirmTimeoutMs_) {
+    const int32_t diff = static_cast<int32_t>(nowMs - clearArmedAtMs_);
+    if (diff < 0) {
+        // Horodatage futur ou legere avance de millis() : ne pas expirer
+        return false;
+    }
+    if (static_cast<uint32_t>(diff) > clearConfirmTimeoutMs_) {
         clearPending_ = false;
         clearArmedAtMs_ = 0;
         return true;
@@ -250,14 +260,45 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
 }
 
 bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
-    return normalized == "confirmer la suppression" ||
-           normalized == "confirmez la suppression" ||
-           normalized == "confirme la suppression" ||
-           normalized == "je confirme la suppression" ||
-           normalized == "oui confirmer la suppression" ||
-           normalized == "oui confirmez la suppression" ||
-           normalized == "oui confirme la suppression" ||
-           normalized == "oui je confirme la suppression";
+    if (normalized == "confirmer la suppression" ||
+        normalized == "confirmez la suppression" ||
+        normalized == "confirme la suppression" ||
+        normalized == "je confirme la suppression" ||
+        normalized == "oui confirmer la suppression" ||
+        normalized == "oui confirmez la suppression" ||
+        normalized == "oui confirme la suppression" ||
+        normalized == "oui je confirme la suppression" ||
+        normalized == "confirmer" ||
+        normalized == "confirmez" ||
+        normalized == "confirme" ||
+        normalized == "je confirme" ||
+        normalized == "oui je confirme" ||
+        normalized == "oui confirmer" ||
+        normalized == "oui confirmez" ||
+        normalized == "oui confirme" ||
+        normalized == "valider la suppression" ||
+        normalized == "valide la suppression" ||
+        normalized == "supprimer toutes les notes" ||
+        normalized == "supprimer les notes" ||
+        normalized == "effacer toutes les notes" ||
+        normalized == "effacer les notes") {
+        return true;
+    }
+    // Toute phrase contenant "confirm" et un mot cible ("suppress", "note", "tout", "effac")
+    if (normalized.indexOf("confirm") >= 0) {
+        if (normalized.indexOf("suppress") >= 0 ||
+            normalized.indexOf("note") >= 0 ||
+            normalized.indexOf("tout") >= 0 ||
+            normalized.indexOf("effac") >= 0) {
+            return true;
+        }
+    }
+    // Formules de suppression globale explicite
+    if ((normalized.indexOf("supprim") >= 0 || normalized.indexOf("effac") >= 0) &&
+        (normalized.indexOf("tout") >= 0 || normalized.indexOf("note") >= 0)) {
+        return true;
+    }
+    return false;
 }
 
 bool CommandRouter::isCancelPhrase(const String& normalized) {
@@ -267,7 +308,9 @@ bool CommandRouter::isCancelPhrase(const String& normalized) {
            normalized == "annuler la suppression" ||
            normalized == "annulez la suppression" ||
            normalized == "annule la suppression" ||
-           normalized == "non";
+           normalized == "non" ||
+           normalized == "non annuler" ||
+           normalized == "stop";
 }
 
 CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
@@ -364,9 +407,15 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
     if (n == "efface toutes les notes" ||
         n == "effacer toutes les notes" ||
         n == "effacez toutes les notes" ||
+        n == "efface les notes" ||
+        n == "effacer les notes" ||
+        n == "effacez les notes" ||
         n == "supprime toutes les notes" ||
         n == "supprimer toutes les notes" ||
         n == "supprimez toutes les notes" ||
+        n == "supprime les notes" ||
+        n == "supprimer les notes" ||
+        n == "supprimez les notes" ||
         n == "vide le carnet" ||
         n == "vider le carnet" ||
         n == "videz le carnet") {

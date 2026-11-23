@@ -347,9 +347,54 @@ void VoiceController::setStatusMessage(const String& msg) {
     }
 }
 
+String VoiceController::formatDisplayTranscript(const String& raw) {
+    if (raw.length() == 0) {
+        return raw;
+    }
+
+    // Verifier si la transcription est entierement en majuscules (Whisper retourne parfois tout en MAJUSCULES)
+    bool hasAlpha = false;
+    bool hasLower = false;
+    for (size_t i = 0; i < raw.length(); ++i) {
+        const char c = raw[i];
+        if (c >= 'a' && c <= 'z') {
+            hasLower = true;
+            hasAlpha = true;
+            break;
+        }
+        if (c >= 'A' && c <= 'Z') {
+            hasAlpha = true;
+        }
+    }
+
+    // Si pas de lettres ou si deja en casse normale (mixte/minuscules), conserver tel quel
+    if (!hasAlpha || hasLower) {
+        return raw;
+    }
+
+    // Chaine entierement en majuscules (ex: "CONFIRMER LA SUPPRESSION." ou "« CONFIRMER LA SUPPRESSION. »") :
+    // convertir en casse phrase naturelle (premiere lettre en majuscule, reste en minuscules)
+    String out = raw;
+    bool firstLetterDone = false;
+    for (size_t i = 0; i < out.length(); ++i) {
+        char c = out[i];
+        if (c >= 'A' && c <= 'Z') {
+            if (!firstLetterDone) {
+                firstLetterDone = true;
+            } else {
+                out[i] = static_cast<char>(c - 'A' + 'a');
+            }
+        } else if (c == '.' || c == '!' || c == '?') {
+            firstLetterDone = false;
+        }
+    }
+    return out;
+}
+
 void VoiceController::setTranscriptDisplay(const String& text) {
-    if (view_.lastTranscript != text) {
-        view_.lastTranscript = text;
+    String formatted = formatDisplayTranscript(text);
+    if (view_.lastTranscript != formatted) {
+        view_.lastTranscript = formatted;
         publishView();
     }
 }
@@ -423,8 +468,8 @@ bool VoiceController::startListeningSession(uint32_t nowMs) {
     }
 
     captureStartedAtMs_ = nowMs;
-    if (view_.clearConfirmPending && router_.isClearConfirmationPending(nowMs)) {
-        // Prolonger la fenetre de confirmation pendant l'ecoute et la transcription en cours
+    if (view_.clearConfirmPending) {
+        // Re-armer systematiquement la fenetre de confirmation pendant l'ecoute et la transcription en cours
         router_.armClearConfirmation(nowMs);
     }
     logLine("[VJ][STT]", "Capture demarree");

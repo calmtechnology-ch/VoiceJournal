@@ -515,6 +515,7 @@ void test_router_mandatory_commands_case_and_accents() {
 void test_router_clear_confirmation_cancel_and_expiration() {
     CommandRouter router(10000); // 10 s
 
+    // Sans confirmation prealable, dire "Confirmer la suppression" ne declenche pas d'effacement (securite)
     EXPECT_EQ(router.route("Confirmer la suppression", 1000).type, CommandType::UNKNOWN);
     EXPECT_EQ(router.route("Efface toutes les notes.", 1000).type, CommandType::REQUEST_CLEAR);
     router.armClearConfirmation(1000);
@@ -529,30 +530,45 @@ void test_router_clear_confirmation_cancel_and_expiration() {
     EXPECT_FALSE(router.isClearConfirmationPending(7000));
 
     router.armClearConfirmation(10000);
-    EXPECT_FALSE(router.isClearConfirmationPending(25000));
-    EXPECT_EQ(router.route("Confirmer la suppression", 25000).type, CommandType::UNKNOWN);
-
-    router.armClearConfirmation(30000);
-    EXPECT_EQ(router.route("Confirmer la suppression.", 35000).type, CommandType::CONFIRM_CLEAR);
-    EXPECT_FALSE(router.isClearConfirmationPending(35000));
-
-    // Reconnaissance en majuscules et variante "Confirmez"
-    router.armClearConfirmation(40000);
-    EXPECT_EQ(router.route("CONFIRMER LA SUPPRESSION.", 45000).type, CommandType::CONFIRM_CLEAR);
-    EXPECT_FALSE(router.isClearConfirmationPending(45000));
+    // Protection anti-underflow si millis() est temporairement inferieur ou egal
+    EXPECT_TRUE(router.isClearConfirmationPending(9995));
+    EXPECT_FALSE(router.checkClearConfirmationTimeout(9995));
+    EXPECT_FALSE(router.isClearConfirmationPending(45000)); // timeout 30 s
+    EXPECT_EQ(router.route("Confirmer la suppression", 45000).type, CommandType::UNKNOWN);
 
     router.armClearConfirmation(50000);
-    EXPECT_EQ(router.route("Confirmez la suppression.", 55000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_EQ(router.route("Confirmer la suppression.", 55000).type, CommandType::CONFIRM_CLEAR);
     EXPECT_FALSE(router.isClearConfirmationPending(55000));
 
+    // Reconnaissance en majuscules et variantes ("Confirmez", "Je confirme", "Confirmer la suppression de toutes les notes")
     router.armClearConfirmation(60000);
-    EXPECT_EQ(router.route("CONFIRMEZ LA SUPPRESSION.", 65000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_EQ(router.route("CONFIRMER LA SUPPRESSION.", 65000).type, CommandType::CONFIRM_CLEAR);
     EXPECT_FALSE(router.isClearConfirmationPending(65000));
 
-    EXPECT_EQ(router.route("Effacez toutes les notes.", 70000).type, CommandType::REQUEST_CLEAR);
     router.armClearConfirmation(70000);
-    EXPECT_EQ(router.route("Annulez", 72000).type, CommandType::CANCEL_CLEAR);
-    EXPECT_FALSE(router.isClearConfirmationPending(72000));
+    EXPECT_EQ(router.route("Confirmez la suppression.", 75000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(75000));
+
+    router.armClearConfirmation(80000);
+    EXPECT_EQ(router.route("CONFIRMEZ LA SUPPRESSION.", 85000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(85000));
+
+    router.armClearConfirmation(90000);
+    EXPECT_EQ(router.route("Je confirme", 95000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(95000));
+
+    router.armClearConfirmation(100000);
+    EXPECT_EQ(router.route("Confirmer la suppression de toutes les notes.", 105000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(105000));
+
+    router.armClearConfirmation(110000);
+    EXPECT_EQ(router.route("Oui je confirme", 115000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(115000));
+
+    EXPECT_EQ(router.route("Effacez toutes les notes.", 120000).type, CommandType::REQUEST_CLEAR);
+    router.armClearConfirmation(120000);
+    EXPECT_EQ(router.route("Annulez", 122000).type, CommandType::CANCEL_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(122000));
 }
 
 // =============================================================================
@@ -1382,6 +1398,21 @@ void test_controller_clear_confirmation_uppercase_and_tts_window() {
     EXPECT_FALSE(ctrl.getViewModel().clearConfirmPending);
 }
 
+void test_controller_format_display_transcript_sentence_case() {
+    EXPECT_EQ(VoiceController::formatDisplayTranscript(""), "");
+    EXPECT_EQ(VoiceController::formatDisplayTranscript("12345"), "12345");
+    // Majuscules integrales converties en casse phrase naturelle
+    EXPECT_EQ(VoiceController::formatDisplayTranscript("CONFIRMER LA SUPPRESSION."),
+              "Confirmer la suppression.");
+    EXPECT_EQ(VoiceController::formatDisplayTranscript("NOTE : LE PROTOTYPE REDEMARRE."),
+              "Note : le prototype redemarre.");
+    // Casse deja mixte ou avec minuscules : preservee telle quelle
+    EXPECT_EQ(VoiceController::formatDisplayTranscript("Confirmer la suppression."),
+              "Confirmer la suppression.");
+    EXPECT_EQ(VoiceController::formatDisplayTranscript("Note, mesure a 3,3 V"),
+              "Note, mesure a 3,3 V");
+}
+
 } // namespace
 
 int main() {
@@ -1431,6 +1462,7 @@ int main() {
     runTest("VoiceController: Gemini initial, profils vocaux et capture apres bascule", test_controller_initial_gemini_and_voice_profiles);
     runTest("VoiceController: cle initiale manquante (ERROR_STATE) puis reprise par bascule", test_controller_missing_initial_key_error_and_switch_recovery);
     runTest("VoiceController: confirmation suppression en majuscules et fenetre apres TTS", test_controller_clear_confirmation_uppercase_and_tts_window);
+    runTest("VoiceController: formatDisplayTranscript convertit les majuscules integrales", test_controller_format_display_transcript_sentence_case);
 
     std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;
