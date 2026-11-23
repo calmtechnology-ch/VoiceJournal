@@ -165,37 +165,79 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
         }
     }
 
-    // Verifier le prefixe explicite "note" (insensible a la casse)
-    if (i + 4 > len) {
-        return false;
-    }
+    // Verifier le prefixe explicite "note" et ses variantes STT francaises
+    // frequentes ("note", "notes", "notez", "noter", "note" accentue)
     auto toLowerAscii = [](char ch) -> char {
         return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
     };
-    if (toLowerAscii(s[i]) != 'n' ||
-        toLowerAscii(s[i + 1]) != 'o' ||
-        toLowerAscii(s[i + 2]) != 't' ||
-        toLowerAscii(s[i + 3]) != 'e') {
+
+    if (i + 4 > len) {
         return false;
     }
-    i += 4;
+    if (toLowerAscii(s[i]) != 'n' ||
+        toLowerAscii(s[i + 1]) != 'o' ||
+        toLowerAscii(s[i + 2]) != 't') {
+        return false;
+    }
+    i += 3;
 
-    // Apres "note", il doit y avoir fin de chaine ou un separateur explicite (espace, virgule, deux-points, point, tiret)
-    if (i < len) {
-        const char next = s[i];
-        const bool isSep = (next == ' ' || next == ',' || next == ':' || next == ';' ||
-                            next == '.' || next == '-' || next == '\t' || next == '\n');
-        if (!isSep) {
-            // Ex: "notes", "noter", "notebook" ne sont PAS le prefixe "note"
-            return false;
+    if (toLowerAscii(s[i]) == 'e') {
+        ++i;
+        // Variantes STT frequentes : "notes", "notez", "noter"
+        if (i < len) {
+            const char suffix = toLowerAscii(s[i]);
+            if (suffix == 's' || suffix == 'z' || suffix == 'r') {
+                ++i;
+            }
         }
+    } else if (static_cast<uint8_t>(s[i]) == 0xC3u && (i + 1) < len &&
+               (static_cast<uint8_t>(s[i + 1]) == 0xA9u || static_cast<uint8_t>(s[i + 1]) == 0x89u)) {
+        // Variante STT "noté" / "NOTÉ" (et accord eventuel "notée" / "notés")
+        i += 2;
+        if (i < len && toLowerAscii(s[i]) == 'e') {
+            ++i;
+        }
+        if (i < len && toLowerAscii(s[i]) == 's') {
+            ++i;
+        }
+    } else {
+        return false;
     }
 
-    // Sauter les separateurs immediatement apres "note"
+    auto separatorLengthAt = [&](size_t pos) -> size_t {
+        if (pos >= len) {
+            return 0;
+        }
+        const uint8_t b0 = static_cast<uint8_t>(s[pos]);
+        if (b0 == ' ' || b0 == ',' || b0 == ':' || b0 == ';' ||
+            b0 == '.' || b0 == '-' || b0 == '\t' || b0 == '\n' || b0 == '\r') {
+            return 1;
+        }
+        // Espace insecable UTF-8 (U+00A0 = C2 A0)
+        if (b0 == 0xC2u && (pos + 1) < len && static_cast<uint8_t>(s[pos + 1]) == 0xA0u) {
+            return 2;
+        }
+        // Espace fine insecable (U+202F = E2 80 AF) et tirets typographiques (U+2013 / U+2014)
+        if (b0 == 0xE2u && (pos + 2) < len && static_cast<uint8_t>(s[pos + 1]) == 0x80u) {
+            const uint8_t b2 = static_cast<uint8_t>(s[pos + 2]);
+            if (b2 == 0xAFu || b2 == 0x93u || b2 == 0x94u) {
+                return 3;
+            }
+        }
+        return 0;
+    };
+
+    // Apres le prefixe, il doit y avoir fin de chaine ou un separateur explicite
+    if (i < len && separatorLengthAt(i) == 0) {
+        // Ex: "notebook" ne sont PAS le prefixe "note"
+        return false;
+    }
+
+    // Sauter les separateurs immediatement apres le prefixe
     while (i < len) {
-        const char c = s[i];
-        if (c == ' ' || c == ',' || c == ':' || c == ';' || c == '.' || c == '-' || c == '\t') {
-            ++i;
+        const size_t sepLen = separatorLengthAt(i);
+        if (sepLen > 0) {
+            i += sepLen;
         } else {
             break;
         }
@@ -209,16 +251,21 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
 
 bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
     return normalized == "confirmer la suppression" ||
+           normalized == "confirmez la suppression" ||
            normalized == "confirme la suppression" ||
            normalized == "je confirme la suppression" ||
            normalized == "oui confirmer la suppression" ||
+           normalized == "oui confirmez la suppression" ||
+           normalized == "oui confirme la suppression" ||
            normalized == "oui je confirme la suppression";
 }
 
 bool CommandRouter::isCancelPhrase(const String& normalized) {
     return normalized == "annuler" ||
+           normalized == "annulez" ||
            normalized == "annule" ||
            normalized == "annuler la suppression" ||
+           normalized == "annulez la suppression" ||
            normalized == "annule la suppression" ||
            normalized == "non";
 }
@@ -316,10 +363,13 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
     // 6. Demande d'effacement de toutes les notes (confirmation obligatoire)
     if (n == "efface toutes les notes" ||
         n == "effacer toutes les notes" ||
+        n == "effacez toutes les notes" ||
         n == "supprime toutes les notes" ||
         n == "supprimer toutes les notes" ||
+        n == "supprimez toutes les notes" ||
         n == "vide le carnet" ||
-        n == "vider le carnet") {
+        n == "vider le carnet" ||
+        n == "videz le carnet") {
         res.type = CommandType::REQUEST_CLEAR;
         return res;
     }

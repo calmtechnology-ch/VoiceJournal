@@ -463,11 +463,35 @@ void test_router_note_prefix_and_variants() {
     EXPECT_EQ(r2.type, CommandType::ADD_NOTE);
     EXPECT_EQ(r2.payload, "Tension instable à 3,3 V.");
 
-    // Observation vide apres "Note" refusee
+    // Variantes STT francaises frequentes : "Notez", "Notes", "Noté", espace insecable
+    auto rNotez = router.route("Notez, la tension chute à 3,1 V.", 1000);
+    EXPECT_EQ(rNotez.type, CommandType::ADD_NOTE);
+    EXPECT_EQ(rNotez.payload, "la tension chute à 3,1 V.");
+
+    auto rNotes = router.route("Notes : capteur déconnecté", 1000);
+    EXPECT_EQ(rNotes.type, CommandType::ADD_NOTE);
+    EXPECT_EQ(rNotes.payload, "capteur déconnecté");
+
+    auto rNotesUpper = router.route("NOTES Température 42°C", 1000);
+    EXPECT_EQ(rNotesUpper.type, CommandType::ADD_NOTE);
+    EXPECT_EQ(rNotesUpper.payload, "Température 42°C");
+
+    auto rNoteAccent = router.route("Noté, tout fonctionne", 1000);
+    EXPECT_EQ(rNoteAccent.type, CommandType::ADD_NOTE);
+    EXPECT_EQ(rNoteAccent.payload, "tout fonctionne");
+
+    auto rNbsp = router.route("Note\xC2\xA0: test espace insécable", 1000);
+    EXPECT_EQ(rNbsp.type, CommandType::ADD_NOTE);
+    EXPECT_EQ(rNbsp.payload, "test espace insécable");
+
+    // Observation vide apres "Note" / "Notez" / "Notes" refusee
     auto rEmpty = router.route("Note,   ", 1000);
     EXPECT_EQ(rEmpty.type, CommandType::NONE);
+    EXPECT_EQ(router.route("Notez,  ", 1000).type, CommandType::NONE);
+    EXPECT_EQ(router.route("Notes", 1000).type, CommandType::NONE);
 
-    // "note" au milieu d'une phrase ne doit PAS declencher ADD_NOTE
+    // "notebook" et "note" au milieu d'une phrase ne doivent PAS declencher ADD_NOTE
+    EXPECT_EQ(router.route("Notebook est allumé", 1000).type, CommandType::UNKNOWN);
     auto rMid = router.route("Je veux prendre une note", 1000);
     EXPECT_EQ(rMid.type, CommandType::UNKNOWN);
 }
@@ -511,6 +535,24 @@ void test_router_clear_confirmation_cancel_and_expiration() {
     router.armClearConfirmation(30000);
     EXPECT_EQ(router.route("Confirmer la suppression.", 35000).type, CommandType::CONFIRM_CLEAR);
     EXPECT_FALSE(router.isClearConfirmationPending(35000));
+
+    // Reconnaissance en majuscules et variante "Confirmez"
+    router.armClearConfirmation(40000);
+    EXPECT_EQ(router.route("CONFIRMER LA SUPPRESSION.", 45000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(45000));
+
+    router.armClearConfirmation(50000);
+    EXPECT_EQ(router.route("Confirmez la suppression.", 55000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(55000));
+
+    router.armClearConfirmation(60000);
+    EXPECT_EQ(router.route("CONFIRMEZ LA SUPPRESSION.", 65000).type, CommandType::CONFIRM_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(65000));
+
+    EXPECT_EQ(router.route("Effacez toutes les notes.", 70000).type, CommandType::REQUEST_CLEAR);
+    router.armClearConfirmation(70000);
+    EXPECT_EQ(router.route("Annulez", 72000).type, CommandType::CANCEL_CLEAR);
+    EXPECT_FALSE(router.isClearConfirmationPending(72000));
 }
 
 // =============================================================================
@@ -1287,6 +1329,55 @@ void test_controller_missing_initial_key_error_and_switch_recovery() {
     EXPECT_EQ(storage.getNote(1), "capture apres reprise");
 }
 
+void test_controller_clear_confirmation_uppercase_and_tts_window() {
+    setMockMillis(70000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Note 1"));
+    EXPECT_TRUE(storage.addNote("Note 2"));
+
+    CommandRouter router(AppConfig::CLEAR_CONFIRM_TIMEOUT_MS);
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // 1. Demande d'effacement -> TTS prompt demarre
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(70100));
+    const uint32_t t1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(70200));
+    engine.simulateTranscription("Efface toutes les notes.", true, t1);
+    setMockMillis(70300);
+    ctrl.update(70300);
+    EXPECT_EQ(ctrl.getState(), JournalState::SPEAKING);
+    EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+
+    // 2. TTS dure 8 secondes : le delai de confirmation ne doit pas expirer et se rearme a la fin
+    setMockMillis(78300);
+    ctrl.update(78300);
+    EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+    engine.simulateSpeechFinished();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // 3. L'utilisateur appuie sur PARLER 10 s apres la fin du TTS (t = 88300, > 15 s depuis t=70300)
+    setMockMillis(88300);
+    ctrl.update(88300);
+    EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(88300));
+    const uint32_t t2 = engine.activeTurnId;
+
+    // 4. L'utilisateur parle 3 s et STT repond 3 s plus tard (t = 94300) en majuscules
+    setMockMillis(91300);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(91300));
+    setMockMillis(94300);
+    engine.simulateTranscription("CONFIRMER LA SUPPRESSION.", true, t2);
+    ctrl.update(94300);
+
+    EXPECT_EQ(storage.count(), static_cast<size_t>(0));
+    EXPECT_FALSE(ctrl.getViewModel().clearConfirmPending);
+}
+
 } // namespace
 
 int main() {
@@ -1335,6 +1426,7 @@ int main() {
     runTest("VoiceController: refus bascule si cle manquante ou moteur occupe", test_controller_provider_switch_rejected_when_missing_key_or_busy);
     runTest("VoiceController: Gemini initial, profils vocaux et capture apres bascule", test_controller_initial_gemini_and_voice_profiles);
     runTest("VoiceController: cle initiale manquante (ERROR_STATE) puis reprise par bascule", test_controller_missing_initial_key_error_and_switch_recovery);
+    runTest("VoiceController: confirmation suppression en majuscules et fenetre apres TTS", test_controller_clear_confirmation_uppercase_and_tts_window);
 
     std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;

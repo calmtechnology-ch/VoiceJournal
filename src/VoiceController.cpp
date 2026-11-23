@@ -224,6 +224,11 @@ void VoiceController::attachCallbacks() {
             aiRequestActive_ = false;
         }
         ttsPlaybackActive_ = false;
+        // Si une confirmation de suppression est en attente, demarrer le decompte
+        // complet a partir de la fin de l'annonce vocale de confirmation.
+        if (view_.clearConfirmPending) {
+            router_.armClearConfirmation(millis());
+        }
         if (state_ == JournalState::SPEAKING || state_ == JournalState::ANALYZING) {
             transitionToEngineActualState();
         }
@@ -388,6 +393,10 @@ bool VoiceController::startListeningSession(uint32_t nowMs) {
     }
 
     captureStartedAtMs_ = nowMs;
+    if (view_.clearConfirmPending && router_.isClearConfirmationPending(nowMs)) {
+        // Prolonger la fenetre de confirmation pendant l'ecoute et la transcription en cours
+        router_.armClearConfirmation(nowMs);
+    }
     logLine("[VJ][STT]", "Capture demarree");
     setStatusMessage("Parlez puis appuyez sur TERMINER");
     setState(JournalState::LISTENING);
@@ -563,8 +572,9 @@ void VoiceController::update(uint32_t nowMs) {
     // 1. Mettre a jour VoiceKit (obligatoire a chaque tour de loop)
     engine_.update();
 
-    // 2. Verifier l'expiration de la confirmation de suppression
-    if (router_.checkClearConfirmationTimeout(nowMs)) {
+    // 2. Verifier l'expiration de la confirmation de suppression (uniquement quand l'utilisateur
+    //    est libre d'agir en READY, jamais pendant l'annonce TTS ou une capture/transcription)
+    if (state_ == JournalState::READY && router_.checkClearConfirmationTimeout(nowMs)) {
         view_.clearConfirmPending = false;
         logLine("[VJ][COMMAND]", "Confirmation de suppression expiree");
         setStatusMessage("Suppression annulee (delai expire).");
@@ -595,7 +605,9 @@ void VoiceController::processFinalTranscription(const String& text, uint32_t now
     CommandResult cmd = router_.route(text, nowMs);
     view_.clearConfirmPending = router_.isClearConfirmationPending(nowMs);
 
-    Serial.printf("[VJ][COMMAND] %s\n", commandTypeToString(cmd.type));
+    Serial.printf("[VJ][COMMAND] %s (norm='%s')\n",
+                  commandTypeToString(cmd.type),
+                  cmd.normalizedInput.c_str());
     executeCommand(cmd, nowMs);
 }
 
