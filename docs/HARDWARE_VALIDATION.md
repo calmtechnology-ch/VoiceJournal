@@ -1,26 +1,26 @@
-# Procédure de validation matérielle — VoiceJournal v0.1.0.1 Corrective (M5Stack CoreS3)
+# Procédure de validation matérielle — VoiceJournal v0.1.1 (M5Stack CoreS3)
 
-> **Règle d'honnêteté technique :** Aucun test ci-dessous ne doit être marqué `PASS` sans exécution réelle sur un **M5Stack CoreS3** physique connecté au Wi-Fi 2.4 GHz et à Google Gemini Live. La réussite de la compilation PlatformIO ou des tests natifs ne constitue pas une validation matérielle.
+> **Règle d'honnêteté technique :** Aucun test ci-dessous ne doit être marqué `PASS` sans exécution réelle sur un **M5Stack CoreS3** physique connecté au Wi-Fi 2.4 GHz et aux fournisseurs IA configurés (OpenAI Realtime et/ou Google Gemini Live). La réussite de la compilation PlatformIO ou des tests natifs ne constitue pas une validation matérielle.
 
 ## 1. Prérequis de banc d'essai
 
 - M5Stack CoreS3 alimenté par câble USB-C données (≥ 5 V / 1 A).
-- `include/secrets.h` configuré avec un réseau Wi-Fi 2.4 GHz et une clé API Gemini valide.
-- Firmware **v0.1.0.1 Corrective** compilé et téléversé (`pio run -e m5stack-cores3 -t upload`).
+- `include/secrets.h` configuré avec un réseau Wi-Fi 2.4 GHz, une clé API OpenAI valide et une clé API Gemini valide (pour tester la bascule `VJ-25` à `VJ-28`).
+- Firmware **v0.1.1** compilé et téléversé (`pio run -e m5stack-cores3 -t upload`).
 - Moniteur série ouvert à 115 200 bauds (`pio device monitor -b 115200`).
 
-## 2. Grille de validation manuelle (VJ-01 à VJ-18 conservés + VJ-19 à VJ-24 ajoutés)
+## 2. Grille de validation manuelle (`VJ-01` à `VJ-24` conservés + `VJ-25` à `VJ-28` ajoutés)
 
 Statuts autorisés : `PASS` | `FAIL` | `NOT RUN`
 
 | ID | Scénario | Manipulation | Comportement attendu | Traces série à observer | Résultat réel | Statut |
 |---|---|---|---|---|---|---|
-| **VJ-01** | Démarrage | Alimenter le CoreS3 et observer l'écran et le moniteur série | Affichage immédiat de l'interface (`VoiceJournal v0.1.0.1`), connexion Wi-Fi/Gemini puis passage à `PRET` | `[VJ][BOOT] VoiceJournal v0.1.0.1`, `[VJ][STORAGE] NVS initialisee`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-01** | Démarrage | Alimenter le CoreS3 et observer l'écran et le moniteur série | Affichage immédiat de l'interface (`VoiceJournal v0.1.1`), connexion Wi-Fi/fournisseur par défaut puis passage à `PRET` | `[VJ][BOOT] VoiceJournal v0.1.1`, `[VJ][STORAGE] NVS initialisee`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
 | **VJ-02** | Première observation | Cliquer `PARLER`, dire *« Note, le prototype redémarre »*, cliquer `TERMINER` | Note enregistrée en NVS, compteur à `1 / 5`, confirmation TTS *« Note enregistrée. »* | `[VJ][STT] Transcription finale recue`, `[VJ][COMMAND] ADD_NOTE`, `[VJ][STORAGE] Ecriture NVS OK`, `[VJ][STORAGE] Notes: 1` | _Non exécuté_ | `NOT RUN` |
 | **VJ-03** | Deuxième observation | Dicter une seconde note *« Note, température stable à 38 degrés »* | Compteur passe à `2 / 5`, écriture NVS confirmée | `[VJ][STORAGE] Ecriture NVS OK`, `[VJ][STORAGE] Notes: 2` | _Non exécuté_ | `NOT RUN` |
 | **VJ-04** | Lecture dernière note | Dire *« Lis la dernière note »* | Lecture vocale et affichage du texte exact de la deuxième observation | `[VJ][COMMAND] READ_LAST_NOTE` | _Non exécuté_ | `NOT RUN` |
 | **VJ-05** | Nombre de notes | Dire *« Combien de notes ? »* | Restitution vocale *« Le carnet contient 2 notes. »* | `[VJ][COMMAND] COUNT_NOTES` | _Non exécuté_ | `NOT RUN` |
-| **VJ-06** | Demande de bilan | Dire *« Fais le bilan »* (puis tester *« Résume les observations »*) | Passage en `ANALYSE IA`, synthèse Gemini en français (2 à 4 phrases), sans invention ni double `say()` | `[VJ][COMMAND] ANALYZE_NOTES`, `[VJ][AI] Envoi requete analyse Gemini`, `[VJ][AI] Restitution analyse terminee` | _Non exécuté_ | `NOT RUN` |
+| **VJ-06** | Demande de bilan | Dire *« Fais le bilan »* (puis tester *« Résume les observations »*) | Passage en `ANALYSE IA`, synthèse IA en français (2 à 4 phrases), sans invention ni double `say()` | `[VJ][COMMAND] ANALYZE_NOTES`, `[VJ][AI] Envoi requete analyse ...`, `[VJ][AI] Restitution analyse terminee` | _Non exécuté_ | `NOT RUN` |
 | **VJ-07** | Redémarrage | Couper l'alimentation USB-C puis redémarrer le CoreS3 | Compteur `2 / 5` immédiatement visible au boot avant même la connexion Wi-Fi ; notes intactes | `[VJ][STORAGE] NVS initialisee`, `[VJ][STORAGE] Notes: 2` | _Non exécuté_ | `NOT RUN` |
 | **VJ-08** | Six observations | Enregistrer 6 notes successives | Rotation circulaire : compteur reste `5 / 5`, la 1re note est remplacée, ordre chronologique 2..6 préservé | `[VJ][STORAGE] Notes: 5` (6e ajout) | _Non exécuté_ | `NOT RUN` |
 | **VJ-09** | STOP pendant TTS | Lancer *« Lis la dernière note »* puis cliquer `STOP` en cours de lecture | Audio coupé immédiatement, retour à `PRET`, notes conservées, commande suivante fonctionnelle | `[VJ][STOP] Interruption demandee`, `[VJ][VOICE] State SPEAKING -> STOPPING`, `... -> READY` | _Non exécuté_ | `NOT RUN` |
@@ -39,10 +39,14 @@ Statuts autorisés : `PASS` | `FAIL` | `NOT RUN`
 | **VJ-22** | **Récupération NVS après interruption simulée** | Enregistrer 3 notes (ou flasher sur un CoreS3 contenant déjà des notes v0.1.0), couper l'alimentation USB-C en cours de session puis redémarrer ; vérifier ensuite un ajout et un redémarrage | Reprise sur le dernier instantané valide (ou migration v0.1.0 préservant les notes) ; aucun effacement silencieux, ordre chronologique intact | `[VJ][STORAGE] NVS initialisee` (et éventuellement `[VJ][STORAGE] Migration NVS v0.1.0 -> v0.1.0.1 reussie` ou `Banque ... incomplete/invalide ignoree`) | _Non exécuté_ | `NOT RUN` |
 | **VJ-23** | **Reconnexion après annulation d'une transcription** | Cliquer `PARLER`, dicter *« Note, test annulé »*, cliquer `TERMINER`, cliquer `STOP` pendant `TRANSCRIPTION`, couper le Wi-Fi puis le rétablir | Après reconnexion, l'appareil revient à `PRET` sans enregistrer la note annulée, sans répéter de TTS ancien et en conservant les notes existantes | `[VJ][STOP] Interruption demandee`, `[VJ][VOICE] State ... -> DISCONNECTED`, `[VJ][VOICE] READY`, aucune ligne `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
 | **VJ-24** | **Nouvelle conversation après timeout de restitution** | Lancer *« Fais le bilan »* ou *« Lis la dernière note »*, couper le flux réseau en cours de restitution pour déclencher le watchdog (`TTS_WATCHDOG_MS` / `AI_RESPONSE_TIMEOUT_MS` = 20 s), rétablir le réseau puis dicter une nouvelle note | Watchdog libère proprement l'état sans blocage permanent ; dès retour à `PRET`, la nouvelle capture et l'enregistrement fonctionnent normalement | `[VJ][VOICE] Timeout restitution audio` (ou `[VJ][AI] Timeout reponse analyse IA`), retour `READY`, puis nouvelle capture `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
+| **VJ-25** | **Démarrage OpenAI** | Laisser `DEFAULT_AI_PROVIDER = AiProvider::OPENAI` dans `include/AppConfig.h`, flasher et démarrer le CoreS3 | Connexion OpenAI Realtime confirmée, bouton affiche `IA: OPENAI`, passage à `PRET`, dictée et synthèse vocale fonctionnelles | `[VJ][VOICE] Initialisation VoiceKit (fournisseur par defaut: OPENAI)`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-26** | **Démarrage Gemini** | Régler `DEFAULT_AI_PROVIDER = AiProvider::GEMINI` dans `include/AppConfig.h` (sans modifier `main.cpp`), flasher et démarrer le CoreS3 | Connexion Gemini Live confirmée, bouton affiche `IA: GEMINI`, passage à `PRET`, dictée et synthèse vocale fonctionnelles | `[VJ][VOICE] Initialisation VoiceKit (fournisseur par defaut: GEMINI)`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-27** | **Bascule OpenAI → Gemini → OpenAI** | En état `PRET` sous OpenAI, appuyer sur `[IA: OPENAI]`, attendre `PRET` sous Gemini, dicter une note ; appuyer sur `[IA: GEMINI]`, attendre `PRET` sous OpenAI, dicter une autre note | Les deux fournisseurs restent pleinement fonctionnels, les notes NVS sont conservées entre chaque bascule, aucun blocage ni double session | `[VJ][PROVIDER] Bascule demandee : OPENAI -> GEMINI`, `[VJ][VOICE] READY`, puis `GEMINI -> OPENAI`, `[VJ][VOICE] READY` | _Non exécuté_ | `NOT RUN` |
+| **VJ-28** | **Bascule après déconnexion** | Depuis `DECONNECTE` (ou après coupure/rétablissement réseau), appuyer sur le sélecteur `[IA: ...]` pour changer de fournisseur, rétablir le réseau si coupé, attendre `PRET` puis dicter une note | Reprise propre sur le nouveau fournisseur, retour à `PRET` uniquement après confirmation moteur, nouvelle capture et enregistrement NVS fonctionnels | `[VJ][VOICE] State ... -> DISCONNECTED`, `[VJ][PROVIDER] Bascule demandee`, `[VJ][VOICE] READY`, `[VJ][STORAGE] Ecriture NVS OK` | _Non exécuté_ | `NOT RUN` |
 
 ## 3. Synthèse de campagne
 
-- **Version testée :** VoiceJournal v0.1.0.1 Corrective
+- **Version testée :** VoiceJournal v0.1.1
 - **Date d'exécution :** _À compléter_
 - **Opérateur :** _À compléter_
-- **Bilan :** `0 PASS` / `0 FAIL` / `24 NOT RUN`
+- **Bilan :** `0 PASS` / `0 FAIL` / `28 NOT RUN`

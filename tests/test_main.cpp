@@ -1180,6 +1180,113 @@ void test_controller_provider_switch_rejected_when_missing_key_or_busy() {
     EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
 }
 
+void test_controller_initial_gemini_and_voice_profiles() {
+    // Verification des profils vocaux et de la coherence AppConfig
+    EXPECT_EQ(std::strcmp(defaultVoiceForProvider(AiProvider::OPENAI), "alloy"), 0);
+    EXPECT_EQ(std::strcmp(defaultVoiceForProvider(AiProvider::GEMINI), "Aoede"), 0);
+    EXPECT_EQ(std::strcmp(AppConfig::VOICE_NAME, defaultVoiceForProvider(AppConfig::DEFAULT_AI_PROVIDER)), 0);
+
+    setMockMillis(50000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    CommandRouter router;
+    MockVoiceEngine engine;
+    engine.provider = AiProvider::GEMINI;
+    engine.hasOpenAiKey = false; // Absence de cle secondaire : ne bloque pas Gemini
+    engine.hasGeminiKey = true;
+
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::GEMINI);
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Capture fonctionnelle sur Gemini meme sans cle OpenAI
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(50100));
+    const uint32_t t1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(50200));
+    engine.simulateTranscription("Note, demarrage Gemini valide", true, t1);
+    ctrl.update(50300);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+    EXPECT_EQ(storage.getLastNote(), "demarrage Gemini valide");
+    engine.simulateSpeechFinished();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Bascule vers OpenAI refusee proprement sans cle OpenAI : reste sur Gemini READY
+    EXPECT_FALSE(ctrl.onSwitchProviderRequested(50500));
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(engine.setProviderCalls, 0);
+
+    // Avec cle OpenAI presente : bascule Gemini -> OpenAI + nouvelle capture + notes conservees
+    engine.hasOpenAiKey = true;
+    EXPECT_TRUE(ctrl.onSwitchProviderRequested(50600));
+    EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(50800));
+    const uint32_t t2 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(50900));
+    engine.simulateTranscription("Note, capture apres bascule OpenAI", true, t2);
+    ctrl.update(51000);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
+    EXPECT_EQ(storage.getNote(0), "demarrage Gemini valide");
+    EXPECT_EQ(storage.getNote(1), "capture apres bascule OpenAI");
+}
+
+void test_controller_missing_initial_key_error_and_switch_recovery() {
+    setMockMillis(60000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Note preexistante"));
+    CommandRouter router;
+    MockVoiceEngine engine;
+    engine.provider = AiProvider::OPENAI;
+    engine.hasOpenAiKey = false;
+    engine.hasGeminiKey = true;
+
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+
+    // Erreur explicite au demarrage si cle initiale absente
+    ctrl.notifyInitError("Cle API OpenAI manquante (secrets.h)");
+    EXPECT_EQ(ctrl.getState(), JournalState::ERROR_STATE);
+    EXPECT_EQ(ctrl.getViewModel().statusMessage, "Cle API OpenAI manquante (secrets.h)");
+
+    // Un evenement CONNECTING_WIFI ne doit pas masquer l'erreur de cle manquante
+    if (engine.onStateChangedCb) {
+        engine.onStateChangedCb(VoiceEngineState::CONNECTING_WIFI);
+    }
+    EXPECT_EQ(ctrl.getState(), JournalState::ERROR_STATE);
+
+    // Bascule depuis ERROR_STATE vers Gemini (cle presente) -> CONNECTING -> READY
+    EXPECT_TRUE(ctrl.onSwitchProviderRequested(60200));
+    EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+
+    // Nouvelle capture vocale fonctionnelle apres reprise + notes preexistantes conservees
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(60400));
+    const uint32_t t1 = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(60500));
+    engine.simulateTranscription("Note, capture apres reprise", true, t1);
+    ctrl.update(60600);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(2));
+    EXPECT_EQ(storage.getNote(0), "Note preexistante");
+    EXPECT_EQ(storage.getNote(1), "capture apres reprise");
+}
+
 } // namespace
 
 int main() {
@@ -1226,6 +1333,8 @@ int main() {
     runTest("JournalUI: selecteur fournisseur IA (hit-test, anti-rebond, etats)", test_ui_provider_switch_touch_rules_and_debounce);
     runTest("VoiceController: OpenAI par defaut + bascule OpenAI <-> Gemini + reprise apres deconnexion", test_controller_default_openai_and_switch_with_gemini);
     runTest("VoiceController: refus bascule si cle manquante ou moteur occupe", test_controller_provider_switch_rejected_when_missing_key_or_busy);
+    runTest("VoiceController: Gemini initial, profils vocaux et capture apres bascule", test_controller_initial_gemini_and_voice_profiles);
+    runTest("VoiceController: cle initiale manquante (ERROR_STATE) puis reprise par bascule", test_controller_missing_initial_key_error_and_switch_recovery);
 
     std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;

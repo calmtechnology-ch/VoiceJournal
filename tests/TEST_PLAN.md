@@ -1,8 +1,8 @@
-# Plan de tests automatiques — VoiceJournal v0.1.0.1 Corrective
+# Plan de tests automatiques — VoiceJournal v0.1.1
 
 ## 1. Objectif
 
-Valider de manière déterministe et reproductible toute la logique métier de **VoiceJournal v0.1.0.1 Corrective** indépendante du matériel ESP32-S3, en compilant les véritables sources de production (`JournalStorage.cpp`, `CommandRouter.cpp`, `VoiceController.cpp`, `JournalUI.cpp`) en C++17 natif avec les mocks de `tests/mocks/`.
+Valider de manière déterministe et reproductible toute la logique métier de **VoiceJournal v0.1.1** indépendante du matériel ESP32-S3, en compilant les véritables sources de production (`JournalStorage.cpp`, `CommandRouter.cpp`, `VoiceController.cpp`, `JournalUI.cpp`) en C++17 natif avec les mocks de `tests/mocks/`.
 
 ## 2. Exécution des tests natifs
 
@@ -17,7 +17,7 @@ g++ -std=c++17 -Wall -Wextra -Werror `
 .\tests\build\voicejournal_tests.exe
 ```
 
-## 3. Couverture fonctionnelle (29 scénarios)
+## 3. Couverture fonctionnelle (34 scénarios)
 
 ### `JournalStorage` (11 tests)
 1. Carnet initialement vide.
@@ -37,12 +37,13 @@ g++ -std=c++17 -Wall -Wextra -Werror `
 2. Reconnaissance de `READ_LAST_NOTE`, `COUNT_NOTES`, `ANALYZE_NOTES` (casse, accents, ponctuation) et rejet `UNKNOWN`.
 3. Confirmation obligatoire pour `CLEAR` (refus d'un simple « oui »), annulation et expiration temporelle.
 
-### `JournalUI` (3 tests)
+### `JournalUI` (4 tests)
 1. Priorité de `STOP` 50 ms et 100 ms après un clic `PARLER` (non bloqué par l'anti-rebond de `PARLER`).
 2. Anti-rebond de `PARLER` rejetant un second `PARLER` à 50 ms et l'acceptant après 180 ms.
 3. Maintien prolongé sur `STOP` générant exactement un seul événement, disponibilité de `STOP` pendant `LISTENING`, `TRANSCRIBING`, `ANALYZING` et `SPEAKING`, et désactivation de `PARLER` hors états autorisés.
+4. Sélecteur tactile de fournisseur IA `[IA: OPENAI / GEMINI]` : détection de zone, anti-rebond dédié (`350 ms`), activation en `READY` / `DISCONNECTED` / `ERROR_STATE` et désactivation pendant toute opération vocale active.
 
-### `VoiceController` (12 tests)
+### `VoiceController` (16 tests)
 1. Transcription partielle vs finale et exécution unique par `turnId`.
 2. `STOP` pendant `LISTENING` (appel unique `cancelListening()`, aucun `stop()` redondant, aucune écriture NVS, finale tardive ignorée).
 3. `STOP` pendant `TRANSCRIBING` + transcription finale tardive refusée, pas de redéclenchement automatique de l'écoute.
@@ -55,3 +56,7 @@ g++ -std=c++17 -Wall -Wextra -Werror `
 10. Analyse IA bornée (`<OBSERVATIONS_UTILISATEUR>`) sans double `say()`.
 11. Timeout de transcription (`TRANSCRIPTION_WATCHDOG_MS`) puis nouvelle capture réussie.
 12. Récupération contrôlée des watchdogs IA (`AI_RESPONSE_TIMEOUT_MS`) et TTS (`TTS_WATCHDOG_MS`).
+13. Initialisation OpenAI par défaut, bascule OpenAI → Gemini → OpenAI, reprise après déconnexion et conservation des notes NVS.
+14. Refus de bascule si clé API cible manquante ou si une opération vocale est en cours (`LISTENING`).
+15. Configuration Gemini comme fournisseur initial (avec profils vocaux `alloy`/`Aoede`, absence de clé secondaire non bloquante, bascule vers OpenAI et nouvelle capture vocale).
+16. Fournisseur initial sans clé valide (`ERROR_STATE` explicite conservé face aux événements `CONNECTING`), reprise par bascule vers le fournisseur secondaire puis capture vocale fonctionnelle après reconnexion.

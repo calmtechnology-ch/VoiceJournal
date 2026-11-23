@@ -18,7 +18,6 @@ static constexpr size_t      MAX_NOTE_BYTES = 180; // Octets UTF-8 maximum par n
 // Parametres vocaux VoiceKit (OpenAI Realtime par defaut, Gemini Live optionnel)
 static constexpr const char* OPENAI_VOICE_NAME   = "alloy";
 static constexpr const char* GEMINI_VOICE_NAME   = "Aoede";
-static constexpr const char* VOICE_NAME          = OPENAI_VOICE_NAME;
 static constexpr const char* VOICE_LANGUAGE      = "fr-FR";
 static constexpr uint8_t     VOICE_VOLUME        = 70;
 static constexpr uint32_t    STT_FINAL_TIMEOUT_MS = 6000;
@@ -42,7 +41,7 @@ static constexpr uint32_t SERIAL_BAUD_RATE        = 115200;
 static constexpr bool     MEMORY_DIAG_ENABLED     = true;
 static constexpr uint32_t MEMORY_DIAG_INTERVAL_MS = 30000;
 
-// Consigne systeme de session Gemini Live pour VoiceJournal (mode non conversationnel)
+// Consigne systeme de session vocale (OpenAI Realtime / Gemini Live) pour VoiceJournal (mode non conversationnel)
 // Evite qu'un tour audio STT ne declenche une longue reponse vocale parasite avant askAi().
 static constexpr const char* VOICE_SYSTEM_INSTRUCTION =
     "Tu es le moteur vocal de l'application embarquee VoiceJournal en francais. "
@@ -98,7 +97,7 @@ inline const char* aiProviderToLogString(AiProvider provider) {
     return aiProviderToUiLabel(provider);
 }
 
-inline const char* defaultVoiceForProvider(AiProvider provider) {
+inline constexpr const char* defaultVoiceForProvider(AiProvider provider) {
     switch (provider) {
         case AiProvider::OPENAI: return AppConfig::OPENAI_VOICE_NAME;
         case AiProvider::GEMINI: return AppConfig::GEMINI_VOICE_NAME;
@@ -107,7 +106,13 @@ inline const char* defaultVoiceForProvider(AiProvider provider) {
 }
 
 namespace AppConfig {
-static constexpr AiProvider DEFAULT_AI_PROVIDER = AiProvider::OPENAI;
+// Fournisseur IA utilise au demarrage
+// Valeurs : AiProvider::OPENAI ou AiProvider::GEMINI
+static constexpr AiProvider DEFAULT_AI_PROVIDER =
+    AiProvider::OPENAI;
+
+static constexpr const char* VOICE_NAME =
+    defaultVoiceForProvider(DEFAULT_AI_PROVIDER);
 } // namespace AppConfig
 
 /**

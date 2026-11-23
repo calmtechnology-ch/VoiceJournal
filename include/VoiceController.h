@@ -120,6 +120,9 @@ public:
     }
 
     AiProvider getProvider() const override {
+        if (voice_.getState() == VoiceState::UNINITIALIZED) {
+            return AppConfig::DEFAULT_AI_PROVIDER;
+        }
         return fromVoiceKitProvider(voice_.getProviderType());
     }
 
@@ -207,14 +210,14 @@ struct JournalViewModel {
 
 /**
  * @class VoiceController
- * @brief Controleur applicatif principal de VoiceJournal v0.1.0.
+ * @brief Controleur applicatif principal de VoiceJournal v0.1.1.
  *
  * Responsabilites :
  * - Machine a etats applicative explicite (JournalState).
  * - Correlation stricte des tours de capture STT par turnId.
  * - Orchestration deterministe des commandes (CommandRouter -> JournalStorage).
  * - File d'attente TTS courte et non bloquante.
- * - Construction bornee et securisee de la requete d'analyse Gemini (askAi).
+ * - Construction bornee et securisee de la requete d'analyse IA (askAi).
  * - Gestion prioritaire et idempotente de STOP.
  * - Watchdogs non bloquants (duree micro, timeout transcription, timeout IA/TTS).
  */

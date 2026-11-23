@@ -93,6 +93,7 @@ void VoiceController::attachCallbacks() {
             case VoiceEngineState::READY:
                 if (engine_.isReady()) {
                     view_.connected = true;
+                    view_.provider = engine_.getProvider();
                     if (state_ == JournalState::CONNECTING ||
                         state_ == JournalState::INITIALIZING ||
                         state_ == JournalState::DISCONNECTED ||

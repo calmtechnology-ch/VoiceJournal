@@ -29,7 +29,7 @@ struct TouchSample {
 
 /**
  * @class JournalUI
- * @brief Interface graphique M5GFX (paysage 320x240, sans LVGL) pour VoiceJournal v0.1.0.1.
+ * @brief Interface graphique M5GFX (paysage 320x240, sans LVGL) pour VoiceJournal v0.1.1.
  *
  * Affiche en permanence l'en-tete, le badge d'etat, le compteur de notes NVS
  * (y compris hors ligne), la derniere transcription, le statut/erreur et les deux

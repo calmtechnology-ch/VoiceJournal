@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief VoiceJournal v0.1.0.1 Corrective — Carnet de laboratoire vocal intelligent pour M5Stack CoreS3.
+ * @brief VoiceJournal v0.1.1 — Carnet de laboratoire vocal intelligent pour M5Stack CoreS3.
  *
  * Utilise la facade publique <VoiceKit.h> (VoiceKit rev 16646c73acf01a8d57408391bc6de15a288b8910),
  * Preferences (NVS), et M5GFX (sans LVGL 9).
@@ -44,18 +44,15 @@
     #endif
 #endif
 
-// Fournisseur IA par defaut au demarrage : OpenAI (modifiable via -DVOICEJOURNAL_DEFAULT_PROVIDER=AiProvider::GEMINI)
-#ifndef VOICEJOURNAL_DEFAULT_PROVIDER
-    #define VOICEJOURNAL_DEFAULT_PROVIDER AppConfig::DEFAULT_AI_PROVIDER
-#endif
-
 namespace {
 
 String sanitizeApiKey(const char* raw) {
     if (!raw) return "";
     String k(raw);
     k.trim();
-    if (k.startsWith("VOTRE_CLE_API_")) {
+    if (k.startsWith("VOTRE_CLE_API_") ||
+        k == "MA_CLE_OPENAI" ||
+        k == "MA_CLE_GEMINI") {
         return "";
     }
     return k;
@@ -103,8 +100,8 @@ void setup() {
     });
     s_ui.begin(s_controller.getViewModel());
 
-    // 4. Configuration de VoiceKit (OpenAI Realtime par defaut, Gemini Live selectionnable)
-    const AiProvider initialProvider = VOICEJOURNAL_DEFAULT_PROVIDER;
+    // 4. Configuration de VoiceKit (fournisseur initial centralise dans AppConfig.h)
+    const AiProvider initialProvider = AppConfig::DEFAULT_AI_PROVIDER;
     const String openAiKey = sanitizeApiKey(OPENAI_KEY);
     const String geminiKey = sanitizeApiKey(GEMINI_KEY);
 
@@ -141,6 +138,11 @@ void setup() {
         s_controller.notifyInitError(err);
     } else {
         s_controller.syncProviderFromEngine();
+        if (!s_voiceAdapter.hasApiKeyForProvider(initialProvider)) {
+            String err = String("Cle API ") + aiProviderToDisplayName(initialProvider) +
+                         " manquante (secrets.h)";
+            s_controller.notifyInitError(err);
+        }
     }
 
     s_ui.renderIfNeeded();
