@@ -1353,12 +1353,16 @@ void test_controller_clear_confirmation_uppercase_and_tts_window() {
     EXPECT_EQ(ctrl.getState(), JournalState::SPEAKING);
     EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
 
-    // 2. TTS dure 8 secondes : le delai de confirmation ne doit pas expirer et se rearme a la fin
+    // 2. TTS dure 8 secondes : le delai de confirmation ne doit pas expirer et se rearme a la fin.
+    //    Sur materiel reel, VoiceKit emet onReady() ("Fin lecture audio") puis onSpeechFinished().
     setMockMillis(78300);
     ctrl.update(78300);
     EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+    engine.simulateReady();
     engine.simulateSpeechFinished();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+    EXPECT_EQ(ctrl.getViewModel().statusMessage, "Dites : Confirmer la suppression");
 
     // 3. L'utilisateur appuie sur PARLER 10 s apres la fin du TTS (t = 88300, > 15 s depuis t=70300)
     setMockMillis(88300);

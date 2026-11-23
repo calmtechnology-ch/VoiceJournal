@@ -32,21 +32,51 @@ VoiceController::VoiceController(IVoiceEngine& engine,
 void VoiceController::attachCallbacks() {
     engine_.onReady([this]() {
         logLine("[VJ][VOICE]", "READY");
-        // Une reconnexion ne doit JAMAIS redeclencher une ancienne commande, transcription ou TTS
-        invalidateCurrentTurn();
-        cancelPendingAiPrompt();
-        router_.cancelClearConfirmation();
-        view_.clearConfirmPending = false;
-        aiRequestActive_ = false;
-        ttsPlaybackActive_ = false;
-        ttsQueue_.clear();
         view_.provider = engine_.getProvider();
 
-        // Ne passer a READY qu'apres confirmation de l'etat reel du moteur
+        const bool isReconnecting =
+            (!view_.connected ||
+             state_ == JournalState::INITIALIZING ||
+             state_ == JournalState::CONNECTING ||
+             state_ == JournalState::DISCONNECTED ||
+             state_ == JournalState::ERROR_STATE);
+
+        if (isReconnecting) {
+            // Une (re)connexion ne doit JAMAIS redeclencher une ancienne commande, transcription ou TTS
+            invalidateCurrentTurn();
+            cancelPendingAiPrompt();
+            router_.cancelClearConfirmation();
+            view_.clearConfirmPending = false;
+            aiRequestActive_ = false;
+            ttsPlaybackActive_ = false;
+            ttsQueue_.clear();
+
+            // Ne passer a READY qu'apres confirmation de l'etat reel du moteur
+            if (engine_.isReady()) {
+                view_.connected = true;
+                setStatusMessage(String("Pret (") + aiProviderToDisplayName(view_.provider) + "). Appuyez sur PARLER.");
+                setState(JournalState::READY);
+            } else {
+                transitionToEngineActualState();
+            }
+            return;
+        }
+
+        // Deja connecte : VoiceKit emet egalement onReady() a la fin d'une lecture audio
+        // (LiveSessionState::CONNECTED "Fin lecture audio"). Ne JAMAIS annuler une
+        // confirmation de suppression en attente ni une requete IA planifiee.
         if (engine_.isReady()) {
             view_.connected = true;
-            setStatusMessage(String("Pret (") + aiProviderToDisplayName(view_.provider) + "). Appuyez sur PARLER.");
-            setState(JournalState::READY);
+            if (state_ == JournalState::SPEAKING ||
+                state_ == JournalState::STOPPING ||
+                (state_ == JournalState::ANALYZING && !hasPendingAiPrompt_)) {
+                aiRequestActive_ = false;
+                ttsPlaybackActive_ = false;
+                if (view_.clearConfirmPending) {
+                    router_.armClearConfirmation(millis());
+                }
+                setState(JournalState::READY);
+            }
         } else {
             transitionToEngineActualState();
         }
