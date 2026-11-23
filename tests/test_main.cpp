@@ -1166,7 +1166,7 @@ void test_ui_provider_switch_touch_rules_and_debounce() {
     }
 }
 
-void test_controller_default_openai_and_switch_with_gemini() {
+void test_controller_default_gemini_and_switch_with_openai() {
     setMockMillis(30000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
@@ -1175,35 +1175,37 @@ void test_controller_default_openai_and_switch_with_gemini() {
 
     CommandRouter router;
     MockVoiceEngine engine;
+    engine.provider = AiProvider::GEMINI;
     VoiceController ctrl(engine, storage, router);
     ctrl.attachCallbacks();
 
-    // Par defaut : OpenAI
-    EXPECT_EQ(AppConfig::DEFAULT_AI_PROVIDER, AiProvider::OPENAI);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
-    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::OPENAI);
+    // Par defaut : Gemini avec models/gemini-3.8-live
+    EXPECT_EQ(AppConfig::DEFAULT_AI_PROVIDER, AiProvider::GEMINI);
+    EXPECT_EQ(std::strcmp(AppConfig::GEMINI_MODEL_NAME, "models/gemini-3.8-live"), 0);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::GEMINI);
 
     engine.simulateReady();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
 
-    // Bascule OpenAI -> Gemini
+    // Bascule Gemini -> OpenAI
     EXPECT_TRUE(ctrl.onSwitchProviderRequested(30100));
     EXPECT_EQ(engine.setProviderCalls, 1);
-    EXPECT_EQ(engine.provider, AiProvider::GEMINI);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(engine.provider, AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
     EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
     EXPECT_EQ(storage.count(), static_cast<size_t>(1)); // NVS intact
 
     engine.simulateReady();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
 
-    // Simuler une erreur / deconnexion Gemini puis retour vers OpenAI
+    // Simuler une erreur / deconnexion OpenAI puis retour vers Gemini
     engine.simulateDisconnect();
     EXPECT_EQ(ctrl.getState(), JournalState::DISCONNECTED);
     EXPECT_TRUE(ctrl.onSwitchProviderRequested(30500));
-    EXPECT_EQ(engine.provider, AiProvider::OPENAI);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(engine.provider, AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
     EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
 
     engine.simulateReady();
@@ -1218,24 +1220,25 @@ void test_controller_provider_switch_rejected_when_missing_key_or_busy() {
     EXPECT_TRUE(storage.begin());
     CommandRouter router;
     MockVoiceEngine engine;
-    engine.hasGeminiKey = false;
+    engine.provider = AiProvider::GEMINI;
+    engine.hasOpenAiKey = false;
     VoiceController ctrl(engine, storage, router);
     ctrl.attachCallbacks();
     engine.simulateReady();
 
-    // Refus si cle Gemini manquante
+    // Refus si cle OpenAI manquante
     EXPECT_FALSE(ctrl.onSwitchProviderRequested(40100));
     EXPECT_EQ(engine.setProviderCalls, 0);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
 
-    // Cle Gemini disponible, mais refus pendant LISTENING
-    engine.hasGeminiKey = true;
+    // Cle OpenAI disponible, mais refus pendant LISTENING
+    engine.hasOpenAiKey = true;
     EXPECT_TRUE(ctrl.onTalkButtonPressed(40200));
     EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
     EXPECT_FALSE(ctrl.onSwitchProviderRequested(40300));
     EXPECT_EQ(engine.setProviderCalls, 0);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
 }
 
 void test_controller_initial_gemini_and_voice_profiles() {
@@ -1457,7 +1460,7 @@ int main() {
 
     // 5. Multi-fournisseurs OpenAI (defaut) / Gemini
     runTest("JournalUI: selecteur fournisseur IA (hit-test, anti-rebond, etats)", test_ui_provider_switch_touch_rules_and_debounce);
-    runTest("VoiceController: OpenAI par defaut + bascule OpenAI <-> Gemini + reprise apres deconnexion", test_controller_default_openai_and_switch_with_gemini);
+    runTest("VoiceController: Gemini par defaut (models/gemini-3.8-live) + bascule Gemini <-> OpenAI + reprise apres deconnexion", test_controller_default_gemini_and_switch_with_openai);
     runTest("VoiceController: refus bascule si cle manquante ou moteur occupe", test_controller_provider_switch_rejected_when_missing_key_or_busy);
     runTest("VoiceController: Gemini initial, profils vocaux et capture apres bascule", test_controller_initial_gemini_and_voice_profiles);
     runTest("VoiceController: cle initiale manquante (ERROR_STATE) puis reprise par bascule", test_controller_missing_initial_key_error_and_switch_recovery);

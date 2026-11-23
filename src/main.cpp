@@ -114,6 +114,7 @@ void setup() {
     cfg.openAiApiKey = openAiKey;
     cfg.geminiApiKey = geminiKey;
     cfg.apiKey = (initialProvider == AiProvider::OPENAI) ? openAiKey : geminiKey;
+    cfg.model = AppConfig::GEMINI_MODEL_NAME;
 
     cfg.wifiMode = WiFiMode::MANAGED_WIFI;
     cfg.wifiSSID = WIFI_SSID;

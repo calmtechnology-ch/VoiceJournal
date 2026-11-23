@@ -15,9 +15,10 @@ static constexpr const char* NVS_NAMESPACE  = "vjournal";
 static constexpr size_t      MAX_NOTES      = 5;
 static constexpr size_t      MAX_NOTE_BYTES = 180; // Octets UTF-8 maximum par note
 
-// Parametres vocaux VoiceKit (OpenAI Realtime par defaut, Gemini Live optionnel)
+// Parametres vocaux VoiceKit (Gemini Live par defaut, OpenAI Realtime optionnel)
 static constexpr const char* OPENAI_VOICE_NAME   = "alloy";
 static constexpr const char* GEMINI_VOICE_NAME   = "Aoede";
+static constexpr const char* GEMINI_MODEL_NAME   = "models/gemini-3.8-live";
 static constexpr const char* VOICE_LANGUAGE      = "fr-FR";
 static constexpr uint8_t     VOICE_VOLUME        = 70;
 static constexpr uint32_t    STT_FINAL_TIMEOUT_MS = 6000;
@@ -109,7 +110,7 @@ namespace AppConfig {
 // Fournisseur IA utilise au demarrage
 // Valeurs : AiProvider::OPENAI ou AiProvider::GEMINI
 static constexpr AiProvider DEFAULT_AI_PROVIDER =
-    AiProvider::OPENAI;
+    AiProvider::GEMINI;
 
 static constexpr const char* VOICE_NAME =
     defaultVoiceForProvider(DEFAULT_AI_PROVIDER);
