@@ -18,6 +18,7 @@ void JournalUI::begin(const JournalViewModel& initialView) {
 
 void JournalUI::updateView(const JournalViewModel& view) {
     if (view_.state != view.state ||
+        view_.provider != view.provider ||
         view_.noteCount != view.noteCount ||
         view_.lastTranscript != view.lastTranscript ||
         view_.statusMessage != view.statusMessage ||
@@ -40,6 +41,12 @@ void JournalUI::renderIfNeeded() {
 
 bool JournalUI::isTalkButtonEnabled() const {
     return (view_.state == JournalState::READY || view_.state == JournalState::LISTENING);
+}
+
+bool JournalUI::isProviderSwitchEnabled() const {
+    return (view_.state == JournalState::READY ||
+            view_.state == JournalState::DISCONNECTED ||
+            view_.state == JournalState::ERROR_STATE);
 }
 
 bool JournalUI::isInsideRect(int x, int y, int rx, int ry, int rw, int rh) {
@@ -81,6 +88,22 @@ TouchAction JournalUI::processTouchSample(const TouchSample& sample, uint32_t no
         hasLastTalkAccepted_ = true;
         lastTalkAcceptedMs_ = nowMs;
         return TouchAction::TALK_TOGGLE;
+    }
+
+    // 5. Bouton selecteur de fournisseur IA [OPENAI / GEMINI] :
+    //    disponible uniquement hors activite vocale (READY, DISCONNECTED, ERROR_STATE)
+    if (isInsideRect(sample.x, sample.y,
+                     BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H)) {
+        if (!isProviderSwitchEnabled()) {
+            return TouchAction::NONE;
+        }
+        if (hasLastProviderAccepted_ &&
+            (nowMs - lastProviderAcceptedMs_) < AppConfig::PROVIDER_SWITCH_DEBOUNCE_MS) {
+            return TouchAction::NONE;
+        }
+        hasLastProviderAccepted_ = true;
+        lastProviderAcceptedMs_ = nowMs;
+        return TouchAction::SWITCH_PROVIDER;
     }
 
     return TouchAction::NONE;
@@ -314,7 +337,30 @@ void JournalUI::draw() {
              static_cast<unsigned>(AppConfig::MAX_NOTES));
     M5.Display.drawString(noteHdr, CARD_X + 10, CARD_Y + 8);
 
+    // Selecteur tactile de fournisseur IA [OPENAI / GEMINI]
+    const bool providerSwitchEnabled = isProviderSwitchEnabled();
+    uint16_t provBg = (view_.provider == AiProvider::OPENAI)
+                          ? M5.Display.color565(16, 130, 105)
+                          : M5.Display.color565(45, 95, 195);
+    uint16_t provFg = TFT_WHITE;
+    if (!providerSwitchEnabled) {
+        provBg = M5.Display.color565(44, 52, 66);
+        provFg = M5.Display.color565(145, 155, 170);
+    }
+    M5.Display.fillRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5, provBg);
+    M5.Display.drawRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5,
+                             providerSwitchEnabled ? TFT_WHITE : cardBorder);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(provFg, provBg);
+    char provLabel[24];
+    snprintf(provLabel, sizeof(provLabel), "IA: %s", aiProviderToUiLabel(view_.provider));
+    M5.Display.drawString(provLabel,
+                          BTN_PROVIDER_X + (BTN_PROVIDER_W / 2),
+                          BTN_PROVIDER_Y + (BTN_PROVIDER_H / 2));
+
     // Pastille de connectivite
+    M5.Display.setTextDatum(top_left);
     const uint16_t netColor = view_.connected ? M5.Display.color565(40, 200, 100)
                                               : M5.Display.color565(220, 120, 40);
     M5.Display.fillCircle(CARD_X + CARD_W - 16, CARD_Y + 16, 5, netColor);

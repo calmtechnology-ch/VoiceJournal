@@ -66,6 +66,15 @@ TouchSample makeRelease() {
     return s;
 }
 
+TouchSample makeProviderPress() {
+    TouchSample s;
+    s.isPressed = true;
+    s.wasPressed = true;
+    s.x = JournalUI::BTN_PROVIDER_X + (JournalUI::BTN_PROVIDER_W / 2);
+    s.y = JournalUI::BTN_PROVIDER_Y + (JournalUI::BTN_PROVIDER_H / 2);
+    return s;
+}
+
 // =============================================================================
 // 1. Tests JournalStorage (regression v0.1.0 + fiabilisation v0.1.0.1)
 // =============================================================================
@@ -1056,10 +1065,125 @@ void test_controller_ai_and_tts_watchdogs_recover() {
     EXPECT_EQ(engine.stopCalls, 2);
 }
 
+// =============================================================================
+// 5. Tests Multi-Fournisseurs OpenAI (defaut) / Gemini (v0.1.1)
+// =============================================================================
+
+void test_ui_provider_switch_touch_rules_and_debounce() {
+    JournalUI ui;
+    JournalViewModel vm;
+    vm.state = JournalState::READY;
+    vm.provider = AiProvider::OPENAI;
+    ui.begin(vm);
+
+    // Clic sur le selecteur IA en READY -> accepte
+    EXPECT_EQ(ui.processTouchSample(makeProviderPress(), 1000), TouchAction::SWITCH_PROVIDER);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1020), TouchAction::NONE);
+
+    // Anti-rebond (350 ms) : rejet a t=1150 ms
+    EXPECT_EQ(ui.processTouchSample(makeProviderPress(), 1150), TouchAction::NONE);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1170), TouchAction::NONE);
+
+    // Accepte apres 350 ms en ERROR_STATE (permet de quitter un fournisseur en erreur)
+    vm.state = JournalState::ERROR_STATE;
+    ui.updateView(vm);
+    EXPECT_EQ(ui.processTouchSample(makeProviderPress(), 1400), TouchAction::SWITCH_PROVIDER);
+    EXPECT_EQ(ui.processTouchSample(makeRelease(), 1420), TouchAction::NONE);
+
+    // Desactive pendant LISTENING, TRANSCRIBING, ANALYZING, SPEAKING, CONNECTING
+    const JournalState busyStates[] = {
+        JournalState::LISTENING,
+        JournalState::TRANSCRIBING,
+        JournalState::ANALYZING,
+        JournalState::SPEAKING,
+        JournalState::CONNECTING
+    };
+    uint32_t t = 2000;
+    for (JournalState st : busyStates) {
+        vm.state = st;
+        ui.updateView(vm);
+        EXPECT_EQ(ui.processTouchSample(makeProviderPress(), t), TouchAction::NONE);
+        EXPECT_EQ(ui.processTouchSample(makeRelease(), t + 20), TouchAction::NONE);
+        t += 500;
+    }
+}
+
+void test_controller_default_openai_and_switch_with_gemini() {
+    setMockMillis(30000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    EXPECT_TRUE(storage.addNote("Note conservee lors du switch"));
+
+    CommandRouter router;
+    MockVoiceEngine engine;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+
+    // Par defaut : OpenAI
+    EXPECT_EQ(AppConfig::DEFAULT_AI_PROVIDER, AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::OPENAI);
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Bascule OpenAI -> Gemini
+    EXPECT_TRUE(ctrl.onSwitchProviderRequested(30100));
+    EXPECT_EQ(engine.setProviderCalls, 1);
+    EXPECT_EQ(engine.provider, AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1)); // NVS intact
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+
+    // Simuler une erreur / deconnexion Gemini puis retour vers OpenAI
+    engine.simulateDisconnect();
+    EXPECT_EQ(ctrl.getState(), JournalState::DISCONNECTED);
+    EXPECT_TRUE(ctrl.onSwitchProviderRequested(30500));
+    EXPECT_EQ(engine.provider, AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
+
+    engine.simulateReady();
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+    EXPECT_EQ(storage.count(), static_cast<size_t>(1));
+}
+
+void test_controller_provider_switch_rejected_when_missing_key_or_busy() {
+    setMockMillis(40000);
+    MockKeyValueStore store;
+    JournalStorage storage(&store);
+    EXPECT_TRUE(storage.begin());
+    CommandRouter router;
+    MockVoiceEngine engine;
+    engine.hasGeminiKey = false;
+    VoiceController ctrl(engine, storage, router);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // Refus si cle Gemini manquante
+    EXPECT_FALSE(ctrl.onSwitchProviderRequested(40100));
+    EXPECT_EQ(engine.setProviderCalls, 0);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getState(), JournalState::READY);
+
+    // Cle Gemini disponible, mais refus pendant LISTENING
+    engine.hasGeminiKey = true;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(40200));
+    EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
+    EXPECT_FALSE(ctrl.onSwitchProviderRequested(40300));
+    EXPECT_EQ(engine.setProviderCalls, 0);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+}
+
 } // namespace
 
 int main() {
-    std::printf("=== VoiceJournal v0.1.0.1 Corrective — Tests unitaires natifs C++17 ===\n");
+    std::printf("=== VoiceJournal v0.1.1 — Tests unitaires natifs C++17 ===\n");
 
     // 1. JournalStorage
     runTest("JournalStorage: carnet initialement vide", test_storage_initially_empty);
@@ -1097,6 +1221,11 @@ int main() {
     runTest("VoiceController: analyse IA bornee sans double say()", test_controller_ai_analysis_prompt_and_no_double_say);
     runTest("VoiceController: timeout transcription puis nouvelle capture", test_controller_transcription_timeout_then_new_capture);
     runTest("VoiceController: watchdogs IA et TTS recuperables", test_controller_ai_and_tts_watchdogs_recover);
+
+    // 5. Multi-fournisseurs OpenAI (defaut) / Gemini
+    runTest("JournalUI: selecteur fournisseur IA (hit-test, anti-rebond, etats)", test_ui_provider_switch_touch_rules_and_debounce);
+    runTest("VoiceController: OpenAI par defaut + bascule OpenAI <-> Gemini + reprise apres deconnexion", test_controller_default_openai_and_switch_with_gemini);
+    runTest("VoiceController: refus bascule si cle manquante ou moteur occupe", test_controller_provider_switch_rejected_when_missing_key_or_busy);
 
     std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
     return (g_failed == 0) ? 0 : 1;

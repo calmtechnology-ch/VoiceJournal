@@ -2,6 +2,16 @@
 
 Toutes les évolutions notables de **VoiceJournal** sont consignées dans ce fichier.
 
+## [0.1.1] - 2026-11-21 — Multi-fournisseurs (OpenAI par défaut + Gemini)
+
+### Ajouté
+- **Support multi-fournisseurs OpenAI Realtime (par défaut) et Google Gemini Live** :
+  - `AppConfig` : ajout de l'énumération `AiProvider` (`OPENAI` par défaut, voix `alloy` ; `GEMINI` en option, voix `Aoede`).
+  - `include/secrets.example.h` et `src/main.cpp` : prise en charge de `OPENAI_KEY` / `OPENAI_API_KEY` (par défaut) et `GEMINI_KEY` / `GEMINI_API_KEY`, transmises simultanément à `VoiceKitConfig` (`openAiApiKey` / `geminiApiKey`) avec filtrage des valeurs modèles (`VOTRE_CLE_API_*`).
+  - `JournalUI` : ajout d'un sélecteur tactile `[IA: OPENAI]` / `[IA: GEMINI]` dans l'en-tête de carte (paysage 320 × 240, rotation 0), actif hors activité vocale (`READY`, `DISCONNECTED`, `ERROR_STATE`) avec anti-rebond dédié (`350 ms`) sans altérer la priorité de `STOP`.
+  - `VoiceController` & `VoiceKitEngineAdapter` : bascule dynamique OpenAI ↔ Gemini (`onSwitchProviderRequested()` / `selectProvider()`), y compris en reprise depuis `DISCONNECTED` ou `ERROR_STATE`, sans jamais toucher aux notes NVS, avec vérification préalable de la présence de la clé API cible.
+  - **Tests natifs C++17** : 3 nouveaux tests (32 au total) validant OpenAI par défaut, la bascule tactile/contrôleur OpenAI ↔ Gemini, la reprise après déconnexion et le refus si clé manquante ou moteur occupé.
+
 ## [0.1.0.1] - 2026-11-21 — Corrective
 
 Version corrective résolvant les défauts identifiés lors de l'audit du 21 novembre 2026 et préparant la campagne de validation sur **M5Stack CoreS3** réel.

@@ -55,6 +55,10 @@ public:
     virtual bool askAi(const String& prompt) = 0;
     virtual void stop() = 0;
 
+    virtual bool setProvider(AiProvider provider) = 0;
+    virtual AiProvider getProvider() const = 0;
+    virtual bool hasApiKeyForProvider(AiProvider provider) const = 0;
+
     virtual bool isReady() const = 0;
     virtual bool isBusy() const = 0;
     virtual bool isListening() const = 0;
@@ -93,6 +97,35 @@ public:
     bool say(const String& text) override { return voice_.say(text); }
     bool askAi(const String& prompt) override { return voice_.askAi(prompt); }
     void stop() override { voice_.stop(); }
+
+    bool setProvider(AiProvider provider) override {
+        VoiceProfile target = voice_.getVoiceProfile();
+        target.provider = toVoiceKitProvider(provider);
+        target.voiceId = defaultVoiceForProvider(provider);
+
+        const VoiceState st = voice_.getState();
+        const bool isOfflineOrError = (st == VoiceState::DISCONNECTED ||
+                                       st == VoiceState::ERROR_STATE ||
+                                       st == VoiceState::IDLE);
+        if (isOfflineOrError) {
+            if (voice_.applyVoiceProfile(target, true)) {
+                return true;
+            }
+            if (voice_.hasProviderApiKey(target.provider)) {
+                return voice_.applyVoiceProfile(target, false);
+            }
+            return false;
+        }
+        return voice_.applyVoiceProfile(target, false);
+    }
+
+    AiProvider getProvider() const override {
+        return fromVoiceKitProvider(voice_.getProviderType());
+    }
+
+    bool hasApiKeyForProvider(AiProvider provider) const override {
+        return voice_.hasProviderApiKey(toVoiceKitProvider(provider));
+    }
 
     bool isReady() const override { return voice_.isReady(); }
     bool isBusy() const override { return voice_.isBusy(); }
@@ -144,6 +177,16 @@ public:
         }
     }
 
+    static VoiceProviderType toVoiceKitProvider(AiProvider provider) {
+        return (provider == AiProvider::GEMINI) ? VoiceProviderType::GEMINI
+                                                : VoiceProviderType::OPENAI;
+    }
+
+    static AiProvider fromVoiceKitProvider(VoiceProviderType provider) {
+        return (provider == VoiceProviderType::GEMINI) ? AiProvider::GEMINI
+                                                       : AiProvider::OPENAI;
+    }
+
 private:
     VoiceKit& voice_;
 };
@@ -154,6 +197,7 @@ private:
  */
 struct JournalViewModel {
     JournalState state = JournalState::INITIALIZING;
+    AiProvider provider = AppConfig::DEFAULT_AI_PROVIDER;
     size_t noteCount = 0;
     String lastTranscript;
     String statusMessage;
@@ -205,9 +249,26 @@ public:
     void onStopButtonPressed(uint32_t nowMs);
 
     /**
+     * @brief Bascule le fournisseur IA actif entre OpenAI et Gemini.
+     *        Autorise uniquement hors activite vocale (READY, DISCONNECTED, ERROR_STATE).
+     * @return true si le changement a ete accepte, false sinon.
+     */
+    bool onSwitchProviderRequested(uint32_t nowMs);
+
+    /**
+     * @brief Selectionne explicitement un fournisseur IA (OpenAI ou Gemini).
+     */
+    bool selectProvider(AiProvider target, uint32_t nowMs);
+
+    /**
      * @brief Notifie un echec d'initialisation moteur.
      */
     void notifyInitError(const String& reason);
+
+    /**
+     * @brief Synchronise le fournisseur affiche avec la configuration active du moteur.
+     */
+    void syncProviderFromEngine();
 
     /**
      * @brief Abonne l'interface utilisateur aux mises a jour de vue.
@@ -215,6 +276,7 @@ public:
     void onViewUpdated(ViewUpdateCallback cb) { onViewUpdated_ = std::move(cb); }
 
     JournalState getState() const { return state_; }
+    AiProvider getProvider() const { return view_.provider; }
     const JournalViewModel& getViewModel() const { return view_; }
 
     /**

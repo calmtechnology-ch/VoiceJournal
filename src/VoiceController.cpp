@@ -22,6 +22,7 @@ VoiceController::VoiceController(IVoiceEngine& engine,
                                  CommandRouter& router)
     : engine_(engine), storage_(storage), router_(router) {
     view_.state = state_;
+    view_.provider = engine_.getProvider();
     view_.noteCount = storage_.count();
     view_.statusMessage = "Initialisation...";
     view_.connected = false;
@@ -39,11 +40,12 @@ void VoiceController::attachCallbacks() {
         aiRequestActive_ = false;
         ttsPlaybackActive_ = false;
         ttsQueue_.clear();
+        view_.provider = engine_.getProvider();
 
         // Ne passer a READY qu'apres confirmation de l'etat reel du moteur
         if (engine_.isReady()) {
             view_.connected = true;
-            setStatusMessage("Pret. Appuyez sur PARLER.");
+            setStatusMessage(String("Pret (") + aiProviderToDisplayName(view_.provider) + "). Appuyez sur PARLER.");
             setState(JournalState::READY);
         } else {
             transitionToEngineActualState();
@@ -57,6 +59,7 @@ void VoiceController::attachCallbacks() {
         aiRequestActive_ = false;
         ttsPlaybackActive_ = false;
         ttsQueue_.clear();
+        view_.provider = engine_.getProvider();
         setStatusMessage(err.length() > 0 ? err : String("Erreur moteur vocal"));
         setState(JournalState::ERROR_STATE);
     });
@@ -67,8 +70,9 @@ void VoiceController::attachCallbacks() {
             case VoiceEngineState::CONNECTING_WIFI:
             case VoiceEngineState::CONNECTING_SERVICE:
                 view_.connected = false;
+                view_.provider = engine_.getProvider();
                 if (state_ != JournalState::ERROR_STATE) {
-                    setStatusMessage("Connexion reseau / Gemini...");
+                    setStatusMessage(String("Connexion reseau / ") + aiProviderToDisplayName(view_.provider) + "...");
                     setState(JournalState::CONNECTING);
                 }
                 break;
@@ -224,14 +228,24 @@ void VoiceController::attachCallbacks() {
         }
     });
 
+    view_.provider = engine_.getProvider();
     view_.noteCount = storage_.count();
     setState(JournalState::CONNECTING);
 }
 
 void VoiceController::notifyInitError(const String& reason) {
+    view_.provider = engine_.getProvider();
     logLine("[VJ][ERROR]", reason.c_str());
     setStatusMessage(reason);
     setState(JournalState::ERROR_STATE);
+}
+
+void VoiceController::syncProviderFromEngine() {
+    const AiProvider current = engine_.getProvider();
+    if (view_.provider != current) {
+        view_.provider = current;
+        publishView();
+    }
 }
 
 void VoiceController::invalidateCurrentTurn() {
@@ -471,6 +485,79 @@ void VoiceController::onStopButtonPressed(uint32_t nowMs) {
     transitionToEngineActualState();
 }
 
+bool VoiceController::onSwitchProviderRequested(uint32_t nowMs) {
+    const AiProvider target = (view_.provider == AiProvider::OPENAI)
+                                  ? AiProvider::GEMINI
+                                  : AiProvider::OPENAI;
+    return selectProvider(target, nowMs);
+}
+
+bool VoiceController::selectProvider(AiProvider target, uint32_t nowMs) {
+    (void)nowMs;
+    const bool stateAllowsSwitch =
+        (state_ == JournalState::READY ||
+         state_ == JournalState::DISCONNECTED ||
+         state_ == JournalState::ERROR_STATE);
+
+    if (!stateAllowsSwitch || engine_.isBusy() || engine_.isListening() || engine_.isTranscribing() ||
+        captureSessionOpen_ || hasPendingFinal_ || hasPendingAiPrompt_) {
+        Serial.printf("[VJ][PROVIDER] Bascule vers %s ignoree (etat=%s)\n",
+                      aiProviderToLogString(target),
+                      journalStateToLogString(state_));
+        return false;
+    }
+
+    if (target == engine_.getProvider() && state_ == JournalState::READY && engine_.isReady()) {
+        view_.provider = target;
+        publishView();
+        return true;
+    }
+
+    if (!engine_.hasApiKeyForProvider(target)) {
+        String msg = String("Cle API ") + aiProviderToDisplayName(target) + " manquante (secrets.h)";
+        Serial.printf("[VJ][PROVIDER] %s\n", msg.c_str());
+        setStatusMessage(msg);
+        return false;
+    }
+
+    // Nettoyer tout etat transitoire sans jamais toucher aux notes NVS
+    invalidateCurrentTurn();
+    cancelPendingAiPrompt();
+    router_.cancelClearConfirmation();
+    view_.clearConfirmPending = false;
+    ttsQueue_.clear();
+    aiRequestActive_ = false;
+    ttsPlaybackActive_ = false;
+
+    Serial.printf("[VJ][PROVIDER] Bascule demandee : %s -> %s\n",
+                  aiProviderToLogString(view_.provider),
+                  aiProviderToLogString(target));
+
+    if (!engine_.setProvider(target)) {
+        view_.provider = engine_.getProvider();
+        String err = engine_.getLastError();
+        if (err.length() == 0) {
+            err = String("Echec bascule vers ") + aiProviderToDisplayName(target);
+        }
+        Serial.printf("[VJ][ERROR] setProvider(%s) echoue : %s\n",
+                      aiProviderToLogString(target), err.c_str());
+        setStatusMessage(err);
+        publishView();
+        return false;
+    }
+
+    view_.provider = target;
+    view_.connected = engine_.isReady();
+    if (engine_.isReady()) {
+        setStatusMessage(String("Fournisseur actif : ") + aiProviderToDisplayName(target));
+        setState(JournalState::READY);
+    } else {
+        setStatusMessage(String("Connexion ") + aiProviderToDisplayName(target) + "...");
+        setState(JournalState::CONNECTING);
+    }
+    return true;
+}
+
 void VoiceController::update(uint32_t nowMs) {
     // 1. Mettre a jour VoiceKit (obligatoire a chaque tour de loop)
     engine_.update();
@@ -586,7 +673,8 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
             pendingAiPrompt_ = prompt;
             hasPendingAiPrompt_ = true;
             pendingAiDispatchAtMs_ = nowMs + AppConfig::AI_DISPATCH_SETTLE_MS;
-            logLine("[VJ][AI]", "Requete analyse Gemini planifiee (stabilisation post-STT)");
+            Serial.printf("[VJ][AI] Requete analyse %s planifiee (stabilisation post-STT)\n",
+                          aiProviderToDisplayName(view_.provider));
             setStatusMessage("Analyse des observations en cours...");
             setState(JournalState::ANALYZING);
             break;
@@ -719,7 +807,8 @@ void VoiceController::pumpPendingAiPrompt(uint32_t nowMs) {
         return;
     }
 
-    logLine("[VJ][AI]", "Envoi requete analyse Gemini");
+    Serial.printf("[VJ][AI] Envoi requete analyse %s\n",
+                  aiProviderToDisplayName(view_.provider));
     if (engine_.askAi(prompt)) {
         aiRequestActive_ = true;
         stateEnteredAtMs_ = nowMs; // Demarrer le watchdog 20 s a l'envoi effectif

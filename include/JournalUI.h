@@ -11,8 +11,9 @@
  */
 enum class TouchAction : uint8_t {
     NONE = 0,
-    TALK_TOGGLE, ///< Clic sur [PARLER / TERMINER]
-    STOP         ///< Clic prioritaire sur [STOP]
+    TALK_TOGGLE,    ///< Clic sur [PARLER / TERMINER]
+    STOP,           ///< Clic prioritaire sur [STOP]
+    SWITCH_PROVIDER ///< Clic sur le selecteur de fournisseur [OPENAI / GEMINI]
 };
 
 /**
@@ -46,6 +47,11 @@ public:
     static constexpr int CARD_Y = 34;
     static constexpr int CARD_W = 304;
     static constexpr int CARD_H = 142;
+
+    static constexpr int BTN_PROVIDER_X = 184;
+    static constexpr int BTN_PROVIDER_Y = 38;
+    static constexpr int BTN_PROVIDER_W = 98;
+    static constexpr int BTN_PROVIDER_H = 24;
 
     static constexpr int BTN_Y      = 184;
     static constexpr int BTN_H      = 48;
@@ -97,6 +103,7 @@ private:
     void draw();
     void drawWrappedText(const String& text, int x, int y, int maxWidth, int maxLines, int lineHeight);
     bool isTalkButtonEnabled() const;
+    bool isProviderSwitchEnabled() const;
     static bool isInsideRect(int x, int y, int rx, int ry, int rw, int rh);
 
     JournalViewModel view_;
@@ -104,4 +111,6 @@ private:
     bool touchDown_ = false;
     bool hasLastTalkAccepted_ = false;
     uint32_t lastTalkAcceptedMs_ = 0;
+    bool hasLastProviderAccepted_ = false;
+    uint32_t lastProviderAcceptedMs_ = 0;
 };

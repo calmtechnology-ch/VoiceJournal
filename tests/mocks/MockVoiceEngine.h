@@ -101,6 +101,29 @@ public:
         }
     }
 
+    bool setProvider(AiProvider target) override {
+        ++setProviderCalls;
+        if (busy || listening || transcribing || failSetProvider) {
+            lastError = "Refus setProvider()";
+            return false;
+        }
+        if (!hasApiKeyForProvider(target)) {
+            lastError = "Cle API manquante";
+            return false;
+        }
+        provider = target;
+        ready = false;
+        state = VoiceEngineState::CONNECTING_SERVICE;
+        if (onStateChangedCb) onStateChangedCb(state);
+        return true;
+    }
+
+    AiProvider getProvider() const override { return provider; }
+
+    bool hasApiKeyForProvider(AiProvider target) const override {
+        return (target == AiProvider::OPENAI) ? hasOpenAiKey : hasGeminiKey;
+    }
+
     bool isReady() const override { return ready && !busy && !listening && !transcribing; }
     bool isBusy() const override { return busy || listening || transcribing; }
     bool isListening() const override { return listening; }
@@ -183,8 +206,12 @@ public:
     bool rejectListen = false;
     bool failSay = false;
     bool failAskAi = false;
+    bool failSetProvider = false;
     bool deferReadyAfterCancel = false;
+    bool hasOpenAiKey = true;
+    bool hasGeminiKey = true;
 
+    AiProvider provider = AppConfig::DEFAULT_AI_PROVIDER;
     VoiceEngineState state = VoiceEngineState::UNINITIALIZED;
     String lastError;
 
@@ -200,6 +227,7 @@ public:
     int sayCalls = 0;
     int askAiCalls = 0;
     int stopCalls = 0;
+    int setProviderCalls = 0;
 
     std::vector<String> spokenTexts;
     std::vector<String> aiPrompts;

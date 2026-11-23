@@ -29,6 +29,13 @@
 #ifndef WIFI_PASSWORD
     #define WIFI_PASSWORD ""
 #endif
+#ifndef OPENAI_KEY
+    #ifdef OPENAI_API_KEY
+        #define OPENAI_KEY OPENAI_API_KEY
+    #else
+        #define OPENAI_KEY ""
+    #endif
+#endif
 #ifndef GEMINI_KEY
     #ifdef GEMINI_API_KEY
         #define GEMINI_KEY GEMINI_API_KEY
@@ -36,6 +43,25 @@
         #define GEMINI_KEY ""
     #endif
 #endif
+
+// Fournisseur IA par defaut au demarrage : OpenAI (modifiable via -DVOICEJOURNAL_DEFAULT_PROVIDER=AiProvider::GEMINI)
+#ifndef VOICEJOURNAL_DEFAULT_PROVIDER
+    #define VOICEJOURNAL_DEFAULT_PROVIDER AppConfig::DEFAULT_AI_PROVIDER
+#endif
+
+namespace {
+
+String sanitizeApiKey(const char* raw) {
+    if (!raw) return "";
+    String k(raw);
+    k.trim();
+    if (k.startsWith("VOTRE_CLE_API_")) {
+        return "";
+    }
+    return k;
+}
+
+} // namespace
 
 // =============================================================================
 // Composants applicatifs globaux
@@ -77,19 +103,26 @@ void setup() {
     });
     s_ui.begin(s_controller.getViewModel());
 
-    // 4. Configuration de VoiceKit (Gemini Live, mode non conversationnel)
-    Serial.println("[VJ][VOICE] Initialisation VoiceKit");
+    // 4. Configuration de VoiceKit (OpenAI Realtime par defaut, Gemini Live selectionnable)
+    const AiProvider initialProvider = VOICEJOURNAL_DEFAULT_PROVIDER;
+    const String openAiKey = sanitizeApiKey(OPENAI_KEY);
+    const String geminiKey = sanitizeApiKey(GEMINI_KEY);
+
+    Serial.printf("[VJ][VOICE] Initialisation VoiceKit (fournisseur par defaut: %s)\n",
+                  aiProviderToLogString(initialProvider));
     s_controller.attachCallbacks();
 
     VoiceKitConfig cfg;
-    cfg.provider = VoiceProviderType::GEMINI;
-    cfg.apiKey = GEMINI_KEY;
+    cfg.provider = VoiceKitEngineAdapter::toVoiceKitProvider(initialProvider);
+    cfg.openAiApiKey = openAiKey;
+    cfg.geminiApiKey = geminiKey;
+    cfg.apiKey = (initialProvider == AiProvider::OPENAI) ? openAiKey : geminiKey;
 
     cfg.wifiMode = WiFiMode::MANAGED_WIFI;
     cfg.wifiSSID = WIFI_SSID;
     cfg.wifiPassword = WIFI_PASSWORD;
 
-    cfg.voice = AppConfig::VOICE_NAME;
+    cfg.voice = defaultVoiceForProvider(initialProvider);
     cfg.language = AppConfig::VOICE_LANGUAGE;
     cfg.volume = AppConfig::VOICE_VOLUME;
 
@@ -106,6 +139,8 @@ void setup() {
             err = "Echec initialisation VoiceKit";
         }
         s_controller.notifyInitError(err);
+    } else {
+        s_controller.syncProviderFromEngine();
     }
 
     s_ui.renderIfNeeded();
@@ -126,6 +161,8 @@ void loop() {
         s_controller.onStopButtonPressed(nowMs);
     } else if (action == TouchAction::TALK_TOGGLE) {
         s_controller.onTalkButtonPressed(nowMs);
+    } else if (action == TouchAction::SWITCH_PROVIDER) {
+        s_controller.onSwitchProviderRequested(nowMs);
     }
 
     // 4. Rafraichissement graphique conditionnel
