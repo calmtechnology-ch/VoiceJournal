@@ -7,13 +7,21 @@ namespace AppConfig {
 
 // Identite applicative
 static constexpr const char* APP_NAME    = "VoiceJournal";
-static constexpr const char* APP_VERSION = "0.2.1";
-static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.1";
+static constexpr const char* APP_VERSION = "0.3.0";
+static constexpr const char* APP_TITLE   = "VoiceJournal v0.3.0";
 
-// Stockage local NVS (tampon circulaire)
+// Memoire materielle CoreS3
+static constexpr size_t HARDWARE_FLASH_BYTES = 16 * 1024 * 1024; // 16 Mio Flash SPI
+static constexpr size_t HARDWARE_PSRAM_BYTES = 8 * 1024 * 1024;  // 8 Mio PSRAM reelle
+
+// Stockage structure v0.3.0 (LittleFS)
+static constexpr size_t MAX_STRUCTURED_ENTRIES = 1000;
+static constexpr size_t MAX_ENTRY_TEXT_BYTES   = 1024; // Octets UTF-8 maximum par entree
+
+// Stockage local NVS (tampon circulaire historique v0.2.1)
 static constexpr const char* NVS_NAMESPACE  = "vjournal";
 static constexpr size_t      MAX_NOTES      = 5;
-static constexpr size_t      MAX_NOTE_BYTES = 180; // Octets UTF-8 maximum par note
+static constexpr size_t      MAX_NOTE_BYTES = 180; // Octets UTF-8 maximum par note NVS
 
 // Parametres vocaux VoiceKit (Gemini Live par defaut, OpenAI Realtime optionnel)
 static constexpr const char* OPENAI_VOICE_NAME   = "alloy";

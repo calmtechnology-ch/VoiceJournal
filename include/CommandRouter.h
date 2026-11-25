@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <cstdint>
 #include "AppConfig.h"
+#include "MemoryModel.h"
 #include "parser/JournalParser.h"
 
 /**
@@ -20,23 +21,50 @@ enum class CommandType : uint8_t {
     CANCEL_CLEAR,      ///< Annulation explicite de suppression
     HELP,              ///< Aide vocale et liste des commandes
     EXPERIMENTAL,      ///< Intention expérimentale comprise mais non exécutable
-    UNKNOWN            ///< Commande non reconnue
+    UNKNOWN,           ///< Commande non reconnue
+    // V0.3.0 Mémoire structurée
+    ADD_TASK,
+    LIST_TASKS,
+    COMPLETE_TASK,
+    CANCEL_TASK,
+    RESOLVE_PROBLEM,
+    SEARCH_NOTES,
+    SEARCH_BY_PROJECT,
+    SEARCH_BY_DATE,
+    ANALYZE_PROJECT,
+    CREATE_PROJECT,
+    OPEN_PROJECT,
+    CLOSE_PROJECT,
+    LIST_PROJECTS
 };
 
 inline const char* commandTypeToString(CommandType type) {
     switch (type) {
-        case CommandType::NONE:           return "NONE";
-        case CommandType::ADD_NOTE:       return "ADD_NOTE";
-        case CommandType::READ_LAST_NOTE: return "READ_LAST_NOTE";
-        case CommandType::COUNT_NOTES:    return "COUNT_NOTES";
-        case CommandType::ANALYZE_NOTES:  return "ANALYZE_NOTES";
-        case CommandType::REQUEST_CLEAR:  return "REQUEST_CLEAR";
-        case CommandType::CONFIRM_CLEAR:  return "CONFIRM_CLEAR";
-        case CommandType::CANCEL_CLEAR:   return "CANCEL_CLEAR";
-        case CommandType::HELP:           return "HELP";
-        case CommandType::EXPERIMENTAL:   return "EXPERIMENTAL";
-        case CommandType::UNKNOWN:        return "UNKNOWN";
-        default:                          return "UNKNOWN";
+        case CommandType::NONE:              return "NONE";
+        case CommandType::ADD_NOTE:          return "ADD_NOTE";
+        case CommandType::READ_LAST_NOTE:    return "READ_LAST_NOTE";
+        case CommandType::COUNT_NOTES:       return "COUNT_NOTES";
+        case CommandType::ANALYZE_NOTES:     return "ANALYZE_NOTES";
+        case CommandType::REQUEST_CLEAR:     return "REQUEST_CLEAR";
+        case CommandType::CONFIRM_CLEAR:     return "CONFIRM_CLEAR";
+        case CommandType::CANCEL_CLEAR:      return "CANCEL_CLEAR";
+        case CommandType::HELP:              return "HELP";
+        case CommandType::EXPERIMENTAL:      return "EXPERIMENTAL";
+        case CommandType::UNKNOWN:           return "UNKNOWN";
+        case CommandType::ADD_TASK:          return "ADD_TASK";
+        case CommandType::LIST_TASKS:        return "LIST_TASKS";
+        case CommandType::COMPLETE_TASK:     return "COMPLETE_TASK";
+        case CommandType::CANCEL_TASK:       return "CANCEL_TASK";
+        case CommandType::RESOLVE_PROBLEM:   return "RESOLVE_PROBLEM";
+        case CommandType::SEARCH_NOTES:      return "SEARCH_NOTES";
+        case CommandType::SEARCH_BY_PROJECT: return "SEARCH_BY_PROJECT";
+        case CommandType::SEARCH_BY_DATE:    return "SEARCH_BY_DATE";
+        case CommandType::ANALYZE_PROJECT:   return "ANALYZE_PROJECT";
+        case CommandType::CREATE_PROJECT:    return "CREATE_PROJECT";
+        case CommandType::OPEN_PROJECT:      return "OPEN_PROJECT";
+        case CommandType::CLOSE_PROJECT:     return "CLOSE_PROJECT";
+        case CommandType::LIST_PROJECTS:     return "LIST_PROJECTS";
+        default:                             return "UNKNOWN";
     }
 }
 
@@ -77,6 +105,11 @@ struct CommandResult {
     String comparisonStatus; ///< Représentation textuelle de ShadowStatus ("MATCH", "SECURITY_BLOCKED", etc.)
     bool blockedByDivergence = false;
     bool isExecutable = false;
+    // V0.3.0 Champs structurés
+    VoiceJournal::EntryType entryType = VoiceJournal::EntryType::NOTE;
+    String projectName;
+    String dateExpr;
+    uint32_t targetId = 0;
 };
 
 /**
@@ -116,6 +149,9 @@ public:
     void setParserMode(ParserMode mode) { mode_ = mode; }
     ParserMode getParserMode() const { return mode_; }
 
+    void setStructuredMemoryEnabled(bool enabled) { structuredMemoryEnabled_ = enabled; }
+    bool isStructuredMemoryEnabled() const { return structuredMemoryEnabled_; }
+
     /**
      * @brief Arme l'attente de confirmation de suppression.
      */
@@ -154,6 +190,7 @@ private:
     bool clearPending_ = false;
     uint32_t clearArmedAtMs_ = 0;
     VoiceJournal::Parser::JournalParser parser_;
+    bool structuredMemoryEnabled_ = false;
 
     static bool extractNotePayload(const String& rawText, String& outPayload);
     static bool isExactConfirmPhrase(const String& normalized);

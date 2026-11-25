@@ -77,6 +77,13 @@ public:
         return indexOf(prefix) == 0;
     }
 
+    bool endsWith(const char* suffix) const {
+        if (!suffix) return false;
+        size_t len = std::strlen(suffix);
+        if (data_.size() < len) return false;
+        return data_.compare(data_.size() - len, len, suffix) == 0;
+    }
+
     String& operator+=(const String& rhs) { data_ += rhs.data_; return *this; }
     String& operator+=(const char* rhs) { if (rhs) data_ += rhs; return *this; }
     String& operator+=(char c) { data_.push_back(c); return *this; }

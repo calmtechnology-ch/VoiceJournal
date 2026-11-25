@@ -1,59 +1,46 @@
-# VoiceJournal v0.2.1 — Procédure de Validation Matérielle (CoreS3)
+# VoiceJournal v0.3.0 — Procédure de Validation Matérielle (CoreS3)
 
-Ce protocole court et unifié permet de valider le bon fonctionnement de **VoiceJournal v0.2.1** sur M5Stack CoreS3 avec un carnet de test.
+Ce protocole de test permet de valider le fonctionnement de **VoiceJournal v0.3.0 (Structured Memory)** sur M5Stack CoreS3 physique.
 
 ---
 
 ## 1. Conditions préalables
 
-1. Boîtier M5Stack CoreS3 relié au port USB.
+1. Boîtier M5Stack CoreS3 relié en USB-C à un PC.
 2. Clés API et réseau configurés dans `include/secrets.h`.
 3. Firmware téléversé avec :
    ```bash
    cd VoiceJournal_CoreS3
    pio run -e m5stack-cores3 -t upload
    ```
-4. Terminal série ouvert :
+4. Terminal série ouvert à 115 200 bauds :
    ```bash
    pio device monitor -b 115200
    ```
 
 ---
 
-## 2. Scénarios de validation prioritaires (VJ-C01 à VJ-C16)
+## 2. Grille de validation matérielle v0.3.0 (VJ3-01 à VJ3-20)
 
-| Code | Scénario | Action à effectuer | Résultat attendu | Résultat constaté | Statut |
-|---|---|---|---|---|---|
-| **VJ-C01** | **Démarrage OpenAI** | Mettre sous tension le boîtier CoreS3. | Écran *VoiceJournal v0.2.1*, état `PRET`, badge `IA: OPENAI` actif par défaut. | Conforme au démarrage | **PASS** |
-| **VJ-C02** | **Enregistrement observation** | Appuyer sur PARLER, dire : *« Note, le prototype fonctionne »*, appuyer sur TERMINER. | Observation affichée sur l'écran, stockée en NVS (Notes : 1/5), confirmation vocale. | Note enregistrée et lue | **PASS** |
-| **VJ-C03** | **Enregistrement avec synonyme** | Appuyer sur PARLER, dire : *« Mémorise que le signal est stable »*, TERMINER. | Note stockée en NVS (Notes : 2/5), confirmation vocale brève. | Note enregistrée avec synonyme | **PASS** |
-| **VJ-C04** | **Lecture dernière note** | Appuyer sur PARLER, dire : *« Lis la dernière note »*, TERMINER. | Le CoreS3 énonce : *« Votre dernière observation est : le signal est stable »*. | Lecture exacte | **PASS** |
-| **VJ-C05** | **Comptage des notes** | Appuyer sur PARLER, dire : *« Combien de notes ? »*, TERMINER. | Le CoreS3 énonce : *« Vous avez deux observations enregistrées. »* | Décompte exact (2) | **PASS** |
-| **VJ-C06** | **Analyse IA (OpenAI)** | Appuyer sur PARLER, dire : *« Fais le bilan »*, TERMINER. | L'écran passe en `ANALYSE IA`, OpenAI produit une synthèse concise des 2 notes et l'énonce. | Synthèse de laboratoire énoncée | **PASS** |
-| **VJ-C07** | **STOP pendant réponse** | Pendant que le CoreS3 parle, toucher le bouton STOP. | Coupure audio immédiate, retour instantané à l'état `PRET`, aucun blocage. | Interruption instantanée | **PASS** |
-| **VJ-C08** | **Refus suppression hors carnet** | Appuyer sur PARLER, dire : *« Supprime le fichier de configuration »*, TERMINER. | Commande non comprise ou refusée. Aucune suppression armée. | Refus net, carnet intact | **PASS** |
-| **VJ-C09** | **Refus confirmation négative** | Dire *« Efface toutes les notes »*, puis à l'invite dire *« Je ne confirme pas la suppression »*. | Confirmation désarmée immédiatement. Le carnet conserve ses 2 notes. | Désarmement immédiat, 2 notes conservées | **PASS** |
-| **VJ-C10** | **Suppression en deux étapes** | Dire *« Efface toutes les notes »*, puis à l'invite dire *« Confirmer la suppression »*. | Carnet vidé en NVS. Notes : 0/5. Confirmation vocale. | Carnet vidé proprement | **PASS** |
-| **VJ-C11** | **Conservation après redémarrage** | Ajouter une note *« Test persistance NVS »*, puis presser le bouton Reset physique. | Après redémarrage, Notes : 1/5, la note est toujours lisible avec *« Lis la dernière note »*. | Note intacte en NVS A/B | **PASS** |
-| **VJ-C12** | **Bascule vers Gemini** | Toucher le bouton `[ IA: OPENAI ]` sur l'écran tactile. | Le bouton bascule sur `[ IA: GEMINI ]` (bleu), reconnexion sur Gemini Live. | Bascule tactile immédiate | **PASS** |
-| **VJ-C13** | **Capture et réponse Gemini** | Dire *« Note, test Gemini réussi »*, puis *« Fais le bilan »*. | Capture et analyse exécutées via Google Gemini Live (`models/gemini-3.8-live`). | Synthèse vocale Gemini | **PASS** |
-| **VJ-C14** | **Retour vers OpenAI** | Toucher à nouveau le bouton `[ IA: GEMINI ]`. | Le bouton repasse sur `[ IA: OPENAI ]`, reconnexion sur OpenAI Realtime. | Bascule et reprise sans rejeu | **PASS** |
-| **VJ-C15** | **Diagnostic USB** | Envoyer `PARSE Je dois tester Gemini demain` sur le port série USB. | Réponse JSON valide avec intention `ADD_TASK` et `executable: false`. Aucune note modifiée. | Réponse JSON conforme | **PASS** |
-| **VJ-C16** | **Intentions expérimentales** | Dire vocalement : *« Je dois tester Gemini demain »*. | Le CoreS3 répond : *« Cette fonction sera disponible dans une prochaine version. »* | Réponse exacte, sans hallucination | **PASS** |
-
----
-
-## 3. Reconnaissance vocale des termes techniques (Section 13)
-
-Lors des essais matériels, les transcriptions audio issues des API cloud peuvent varier :
-
-| Terme cible | Transcription OpenAI observée | Transcription Gemini observée | Traitement VoiceJournal v0.2.1 |
-|---|---|---|---|
-| `CoreS3` | *corps étroit*, *core s 3*, *cores3* | *Core S3*, *corps et 3* | L'entité `CoreS3` est reconnue par alias lexical sans modifier le texte dicté. |
-| `VoiceKit` | *Wari Skate*, *voice kit*, *voicekit* | *Voice Kit*, *voix kit* | L'entité `VoiceKit` est isolée dans les métadonnées de diagnostic. |
-| `bugs` | *bagues*, *bogue* | *bugs*, *bogues* | Préservé intact dans le carnet NVS. Aucune altération phonétique silencieuse. |
-
-**Règles appliquées :**
-- Le texte dicté par l'utilisateur est stocké en NVS fidèlement sans altération silencieuse.
-- Le diagnostic série USB retransmet l'entrée exacte issue du moteur vocal.
-- Aucune modification n'est apportée à VoiceKit dans cette version.
+| Code | Scénario | Action à effectuer | Résultat attendu | Statut |
+|---|---|---|---|---|
+| **VJ3-01** | **Démarrage & Écran LVGL 9** | Mettre sous tension le boîtier CoreS3. | Écran orienté paysage 320 × 240, netteté des polices Segoe UI françaises, onglet Accueil actif, bannière vocale avec bouton STOP. | **À tester** |
+| **VJ3-02** | **Migration NVS A/B** | Démarrer sur un boîtier contenant des notes v0.2.1. | Les notes NVS sont importées automatiquement dans LittleFS au premier boot. Drapeau `migrated_v030` posé, aucun doublon au redémarrage. | **À tester** |
+| **VJ3-03** | **Création de projet vocal** | Dire : *« Crée le projet VoiceKit »*. | Projet créé avec ID 1. Confirmation vocale. Visible dans l'onglet Projets. | **À tester** |
+| **VJ3-04** | **Sélection de projet courant** | Dire : *« Ouvre le projet VoiceKit »*. | Projet courant mis à jour sur l'écran d'accueil ("Projet : VoiceKit"). | **À tester** |
+| **VJ3-05** | **Association au projet courant** | Dire : *« Note, Gemini se déconnecte après quelques secondes »*. | Observation ajoutée sous le type `NOTE` et associée au projet VoiceKit. | **À tester** |
+| **VJ3-06** | **Enregistrement d'un problème** | Dire : *« Enregistre un problème : coupure WiFi sur le CoreS3 »*. | Entrée créée sous le type `PROBLEM` avec statut `OPEN`. Compteur de problèmes incrémenté. | **À tester** |
+| **VJ3-07** | **Ajout d'une tâche vocale** | Dire : *« Je dois tester Gemini demain »*. | Tâche créée sous le type `TASK` avec statut `OPEN` et date relative demain. Visible dans l'onglet Tâches. | **À tester** |
+| **VJ3-08** | **Consultation des tâches** | Dire : *« Quelles sont mes tâches ? »*. | L'écran bascule sur l'onglet Tâches et liste les tâches ouvertes. Énonciation vocale du nombre de tâches. | **À tester** |
+| **VJ3-09** | **Clôture tactile d'une tâche** | Dans l'onglet Tâches, toucher le bouton "Terminer". | La tâche passe au statut `COMPLETED`. Retirée de la liste des tâches ouvertes. | **À tester** |
+| **VJ3-10** | **Clôture vocale d'une tâche** | Dire : *« La tâche tester Gemini est terminée »*. | Tâche correspondante retrouvée et marquée `COMPLETED`. Confirmation vocale. | **À tester** |
+| **VJ3-11** | **Consultation du Journal** | Toucher l'onglet "Journal". | Cartes d'entrées affichées par groupes de 3 avec pagination (`Précédent` / `Suivant`). | **À tester** |
+| **VJ3-12** | **Vue Détail d'une entrée** | Toucher une carte du Journal. | Affichage plein écran : texte intégral, date Europe/Zurich, type, projet, boutons d'action. | **À tester** |
+| **VJ3-13** | **Lecture audio d'une note** | Dans la vue Détail, toucher le bouton "Lire". | Synthèse vocale de l'entrée via OpenAI / Gemini sans blocage de l'interface. | **À tester** |
+| **VJ3-14** | **Résolution tactile d'un problème** | Dans la vue Détail d'un problème, toucher "Marquer résolu". | Statut mis à jour à `RESOLVED`. Compteur de problèmes décrémenté. | **À tester** |
+| **VJ3-15** | **Recherche par mot-clé** | Dire : *« Retrouve les observations sur Gemini »*. | Recherche multicritère exécutée localement. Présentation des résultats correspondants. | **À tester** |
+| **VJ3-16** | **Analyse IA contextuelle bornée** | Dire : *« Fais le bilan »*. | Prompt ciblé injectant les 10 dernières entrées (< 1 500 car.). Synthèse structurée énoncée par l'IA. | **À tester** |
+| **VJ3-17** | **Bouton STOP prioritaire** | Toucher STOP rouge pendant la parole de l'IA. | Arrêt immédiat de l'audio et retour à l'état PRET (< 50 ms). | **À tester** |
+| **VJ3-18** | **Bascule OpenAI <-> Gemini** | Toucher le bouton IA sur l'écran d'accueil. | Bascule immédiate de profil vocal et reconnexion transparente. | **À tester** |
+| **VJ3-19** | **Persistance LittleFS après coupure** | Ajouter une entrée, presser le bouton Reset physique. | Toutes les entrées, projets et statuts sont fidèlement reconstruits au redémarrage. | **À tester** |
+| **VJ3-20** | **Protocole série JSON étendu** | Envoyer `JOURNAL_STATUS` et `EXPORT_JOURNAL` via le moniteur série. | Réponse JSON complète retournant métriques et entrées. | **À tester** |

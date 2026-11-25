@@ -118,6 +118,11 @@ public:
     const String& getRecoveryDiagnostic() const { return recoveryDiagnostic_; }
 
     /**
+     * @brief Retourne le magasin cle-valeur sous-jacent.
+     */
+    IKeyValueStore* getStore() const { return store_; }
+
+    /**
      * @brief Indique la banque active courante (0 = A, 1 = B) pour diagnostic et tests.
      */
     uint8_t getActiveBank() const { return activeBank_; }

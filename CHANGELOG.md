@@ -2,6 +2,43 @@
 
 Toutes les évolutions notables de **VoiceJournal** sont consignées dans ce fichier.
 
+## [0.3.0] - 2026-11-25 — Structured Memory Release
+
+Version majeure transformant VoiceJournal en un véritable assistant de mémoire personnelle et technique structurée avec stockage LittleFS et interface graphique sous LVGL 9.
+
+### Ajouté
+- **Mémoire structurée LittleFS (`JournalRepository`)** :
+  - Journal append-only avec format binaire délimité, CRC32, récupération sur coupure de courant et compactage contrôlé.
+  - Index en mémoire RAM (~32 Ko pour 1 000 entrées) permettant des requêtes immédiates sans lecture disque.
+  - Modèle de données enrichi (`MemoryModel.h`) : types d'entrées (`NOTE`, `PROBLEM`, `TASK`, `IDEA`, `DECISION`, `RESULT`), statuts de cycle de vie (`NONE`, `OPEN`, `IN_PROGRESS`, `COMPLETED`, `RESOLVED`, `CANCELLED`), association à des projets, étiquettes et entités.
+  - Abstraction du système de fichiers (`IFileSystem`, `NativeFileSystem` sur PC, `LittleFSFileSystem` sur ESP32-S3).
+- **Interface graphique moderne LVGL 9 (`JournalUI`)** :
+  - Intégration de LVGL 9.6.0 avec pilote d'affichage M5GFX (RGB565 swapped, rotation 0 paysage natif 320 × 240).
+  - Navigation par onglets : Accueil, Journal (3 cartes réutilisables paginées), Projets, Tâches.
+  - Écran de détail avec lecture vocale de note (`READ_ENTRY`) et bascule de statut tactile.
+  - Bannière vocale permanente avec bouton STOP prioritaire instantané et statut IA/fournisseur.
+  - Intégration des polices Segoe UI avec accents français complets (`font_french_12`, `font_french_14`, `font_french_bold_16`).
+- **Services métier découplés** :
+  - `ProjectService` : création, alias, bascule de projet courant (« Ouvre le projet VoiceKit »), archivage.
+  - `TaskService` : création de tâches (« Je dois tester Gemini demain »), clôture (« La tâche tester Gemini est terminée »), réouverture, annulation.
+  - `SearchService` : moteur de recherche multicritère local sans recours à une base vectorielle (recherche par mots-clés normalisés, entités, projets, types, statuts, dates relatives).
+  - `TimeService` : horodatage interne en UTC, synchronisation RTC + NTP non bloquante, fuseau horaire `Europe/Zurich` avec gestion automatique heure d'été / hiver, analyseur de dates relatives en français.
+  - `AnalysisService` : constructeur de contexte d'analyse IA borné (10 observations max, 1 500 octets max, balisage `<OBSERVATIONS_UTILISATEUR>`).
+- **Migration automatique NVS vers LittleFS (`StorageMigration`)** :
+  - Migration non destructive et idempotente des notes v0.2.1 vers la mémoire structurée au premier démarrage.
+  - Conservation intégrale des clés et données NVS d'origine.
+- **Table de partitionnement 16 Mo (`partitions_16MB.csv`)** :
+  - Partition applicative portée à 6 Mo (occupation 39,1 %).
+  - Partition LittleFS dédiée de 9 Mo.
+  - Partition NVS préservée à l'adresse exacte d'origine `0x9000` (20 Ko).
+- **Protocole série JSON étendu** :
+  - Nouvelles commandes série : `JOURNAL_STATUS`, `GET_ENTRY`, `LIST_PROJECTS`, `LIST_TASKS`, `EXPORT_JOURNAL`.
+- **Suite de tests Structured Memory v0.3.0 (`test_v030_structured_memory_suite`)** :
+  - 10 nouveaux scénarios complets couvrant le repository, la tolérance aux coupures d'alimentation, le compactage, la migration NVS, les services et le routeur de commandes.
+  - Total global porté à **646 tests PASS, 0 FAIL (100% succès)**.
+
+---
+
 ## [0.2.1] - 2026-11-25 — Consolidation Release
 
 Version de consolidation générale de VoiceJournal, établissant un socle logiciel unifié, robuste et sécurisé pour l'ESP32-S3 / M5Stack CoreS3.

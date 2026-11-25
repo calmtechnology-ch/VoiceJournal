@@ -1,27 +1,29 @@
-# VoiceJournal v0.2.1 — Carnet de laboratoire vocal autonome
+# VoiceJournal v0.3.0 — Mémoire structurée & interface LVGL 9
 
 Application embarquée en C++17 pour **M5Stack CoreS3** (ESP32-S3), propulsée par la façade publique [`<VoiceKit.h>`](https://github.com/calmtechnology-ch/VoiceKit) (révision `16646c73acf01a8d57408391bc6de15a288b8910`). 
 
-VoiceJournal intègre un moteur de compréhension du langage naturel (NLU) déterministe hors-ligne, un double fournisseur d'IA vocale (**OpenAI Realtime** par défaut, basculable vers **Google Gemini Live**), et un stockage sécurisé à double page NVS A/B.
+VoiceJournal intègre un moteur de compréhension du langage naturel (NLU) déterministe hors-ligne, un double fournisseur d'IA vocale (**OpenAI Realtime** par défaut, basculable vers **Google Gemini Live**), une **mémoire structurée LittleFS** (jusqu'à 1 000 entrées avec indexation RAM), et une **interface graphique moderne sous LVGL 9**.
 
-La version **v0.2.1** est une **consolidation industrielle** garantissant l'intégrité mémoire, le rejet strict des entrées invalides, l'unification du protocole USB en JSON et la sécurité absolue des commandes destructives.
+La version **v0.3.0** apporte la persistance structurée, la gestion des projets, des tâches avec échéance, des problèmes, un moteur de recherche multicritère local et une interface tactile fluide respectant la philosophie CalmTechnology.
 
-> **Statut de qualification v0.2.1 :**
-> - **636 tests unitaires natifs C++17 réussis à 100%** (36 legacy, 220 NLU, 289 contextuels, 91 consolidation).
-> - **Jeu de données contextuel 53/53 cas réussis à 100%** sur le simulateur PC.
-> - **Empreinte mémoire ESP32-S3 optimisée** : RAM 27,8% (90 996 / 327 680 B), Flash 95,3% (1 998 589 / 2 097 152 B).
-> - **Protocole série JSON standardisé** pour l'interfaçage avec de futures applications PC.
+> **Statut de qualification v0.3.0 :**
+> - **646 tests unitaires natifs C++17 réussis à 100%** (36 legacy, 220 NLU, 289 contextuels, 91 consolidation, 10 mémoire structurée).
+> - **Jeu de données contextuel 21/21 cas benchmark réussis à 100%** sur le simulateur PC.
+> - **Empreinte mémoire ESP32-S3 maîtrisée** : RAM 47,0% (154 092 / 327 680 B), Flash 39,1% (2 462 037 / 6 291 456 B dans la partition app de 6 Mo).
+> - **Partitionnement Flash 16 Mo** : 6 Mo application, 9 Mo LittleFS, 20 Ko NVS préservée sans perte de données.
+> - **Protocole série JSON étendu** pour l'interfaçage avec des applications externes et l'exportation.
 
 ---
 
 ## 1. Qu'est-ce que VoiceJournal ?
 
-**VoiceJournal** transforme un boîtier autonome M5Stack CoreS3 en carnet de laboratoire vocal pour ingénieurs, techniciens et makers :
-1. **Dictée d'observations techniques** : capturez vos notes sur le terrain ou à l'établi sans clavier ni écran.
-2. **Stockage non volatil local (NVS A/B)** : conserve jusqu'à 5 observations de 180 octets chacune, résistantes aux coupures d'alimentation, sans dépendre du cloud pour la persistance.
-3. **Moteur NLU contextuel local (< 1 ms)** : analyse sémantique déterministe en C++17 embarqué sur l'ESP32-S3, distinguant précisément les actions, les cibles, les négations et les ambiguïtés.
-4. **Synthèse vocale intelligente** : demandez à l'IA vocale (OpenAI Realtime ou Google Gemini Live) de relire vos observations ou d'en produire une synthèse structurée.
-5. **Ergonomie industrielle sécurisée** : bouton Push-To-Talk (PTT) à deux clics, bouton STOP prioritaire instantané, et désarmement automatique des suppressions en cas de doute.
+**VoiceJournal** transforme un boîtier autonome M5Stack CoreS3 en carnet de laboratoire vocal et assistant de mémoire pour ingénieurs, techniciens et makers :
+1. **Dictée d'observations techniques structurées** : capturez vos notes, problèmes, tâches, idées, décisions et résultats sur le terrain ou à l'établi.
+2. **Mémoire structurée LittleFS (jusqu'à 1 000 entrées)** : journal append-only avec intégrité CRC32, réparation automatique sur coupure d'alimentation et index en RAM ultra-rapide.
+3. **Moteur NLU contextuel local (< 1 ms)** : analyse sémantique déterministe en C++17 embarqué sur l'ESP32-S3, distinguant précisément les intentions de création, de recherche et d'organisation.
+4. **Gestion des projets et des tâches** : associez des observations au projet courant (« Ouvre le projet VoiceKit ») et suivez vos échéances (« Je dois tester Gemini demain »).
+5. **Recherche multicritère locale** : retrouvez instantanément vos observations sans base vectorielle ni modèle cloud.
+6. **Interface LVGL 9 épurée** : 4 vues principales (Accueil, Journal, Projets, Tâches), écran de détail avec relecture vocale TTS, et bouton STOP prioritaire universel.
 
 ---
 
@@ -62,7 +64,7 @@ pio device monitor -b 115200
 
 ### Exécution des tests natifs et du simulateur PC
 ```bash
-# Compiler et exécuter les 636 tests unitaires sur PC :
+# Compiler et exécuter les 646 tests unitaires sur PC :
 cd tests
 mkdir build && cd build
 cmake ..

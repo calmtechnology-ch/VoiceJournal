@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "parser/ParserTypes.h"
 #include "CommandRouter.h"
+#include "MemoryModel.h"
 
 namespace VoiceJournal::Protocol {
 
@@ -85,6 +86,59 @@ inline std::string formatParserStatusJson(
     return ss.str();
 }
 
+inline std::string formatJournalStatusJson(
+    const char* version,
+    size_t entryCount,
+    size_t capacity,
+    size_t projectCount,
+    size_t openTasksCount,
+    size_t usedBytes,
+    size_t totalBytes,
+    bool timeReliable,
+    const std::string& currentProject
+) {
+    std::ostringstream ss;
+    ss << "{\n"
+       << "  \"command\": \"JOURNAL_STATUS\",\n"
+       << "  \"version\": \"" << version << "\",\n"
+       << "  \"entryCount\": " << entryCount << ",\n"
+       << "  \"capacity\": " << capacity << ",\n"
+       << "  \"projectCount\": " << projectCount << ",\n"
+       << "  \"openTasksCount\": " << openTasksCount << ",\n"
+       << "  \"storageUsedBytes\": " << usedBytes << ",\n"
+       << "  \"storageTotalBytes\": " << totalBytes << ",\n"
+       << "  \"timeReliable\": " << (timeReliable ? "true" : "false") << ",\n"
+       << "  \"currentProject\": \"" << escapeJson(currentProject) << "\"\n"
+       << "}";
+    return ss.str();
+}
+
+inline std::string formatEntryJson(const JournalEntry& entry) {
+    std::ostringstream ss;
+    ss << "{\n"
+       << "  \"id\": " << entry.id << ",\n"
+       << "  \"type\": \"" << entryTypeToString(entry.type) << "\",\n"
+       << "  \"projectId\": " << entry.projectId << ",\n"
+       << "  \"createdAt\": " << entry.createdAt << ",\n"
+       << "  \"updatedAt\": " << entry.updatedAt << ",\n"
+       << "  \"status\": \"" << entryStatusToString(entry.status) << "\",\n"
+       << "  \"dueAt\": " << entry.dueAt << ",\n"
+       << "  \"text\": \"" << escapeJson(entry.text) << "\"\n"
+       << "}";
+    return ss.str();
+}
+
+inline std::string formatProjectJson(const Project& project) {
+    std::ostringstream ss;
+    ss << "{\n"
+       << "  \"id\": " << project.id << ",\n"
+       << "  \"name\": \"" << escapeJson(project.name) << "\",\n"
+       << "  \"createdAt\": " << project.createdAt << ",\n"
+       << "  \"status\": \"" << projectStatusToString(project.status) << "\"\n"
+       << "}";
+    return ss.str();
+}
+
 inline std::string formatParserHelpJson() {
     return "{\n"
            "  \"command\": \"PARSER_HELP\",\n"
@@ -92,7 +146,13 @@ inline std::string formatParserHelpJson() {
            "    \"PARSE <texte>\",\n"
            "    \"PARSE_SHADOW <texte>\",\n"
            "    \"PARSER_STATUS\",\n"
-           "    \"PARSER_HELP\"\n"
+           "    \"PARSER_HELP\",\n"
+           "    \"JOURNAL_STATUS\",\n"
+           "    \"LIST_ENTRIES [offset] [limit]\",\n"
+           "    \"GET_ENTRY <id>\",\n"
+           "    \"LIST_PROJECTS\",\n"
+           "    \"LIST_TASKS\",\n"
+           "    \"EXPORT_JOURNAL\"\n"
            "  ]\n"
            "}";
 }

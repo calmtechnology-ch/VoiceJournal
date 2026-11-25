@@ -1,4 +1,11 @@
 #include "VoiceController.h"
+#include "JournalRepository.h"
+#include "ProjectService.h"
+#include "TaskService.h"
+#include "SearchService.h"
+#include "AnalysisService.h"
+#include "TimeService.h"
+#include "JournalUI.h"
 
 #include <cstdio>
 
@@ -27,6 +34,27 @@ VoiceController::VoiceController(IVoiceEngine& engine,
     view_.statusMessage = "Initialisation...";
     view_.connected = false;
     view_.clearConfirmPending = false;
+}
+
+void VoiceController::attachStructuredMemory(
+    VoiceJournal::JournalRepository* repo,
+    VoiceJournal::ProjectService* projService,
+    VoiceJournal::TaskService* taskService,
+    VoiceJournal::SearchService* searchService,
+    VoiceJournal::AnalysisService* analysisService,
+    VoiceJournal::TimeService* timeService,
+    JournalUI* ui
+) {
+    repo_ = repo;
+    projService_ = projService;
+    taskService_ = taskService;
+    searchService_ = searchService;
+    analysisService_ = analysisService;
+    timeService_ = timeService;
+    ui_ = ui;
+    if (repo_) {
+        view_.noteCount = repo_->countEntries();
+    }
 }
 
 void VoiceController::attachCallbacks() {
@@ -772,6 +800,20 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
                 logLine("[VJ][STORAGE]", "Ecriture NVS OK");
                 Serial.printf("[VJ][STORAGE] Notes: %u\n", static_cast<unsigned>(storage_.count()));
                 view_.noteCount = storage_.count();
+
+                // Ajout structuré dans JournalRepository si actif
+                if (repo_) {
+                    VoiceJournal::JournalEntry entry;
+                    entry.type = cmd.entryType;
+                    entry.text = std::string(cmd.payload.c_str());
+                    entry.projectId = projService_ ? projService_->getCurrentProjectId() : 0;
+                    entry.createdAt = timeService_ ? timeService_->getCurrentUtc() : 0;
+                    entry.status = VoiceJournal::defaultStatusForType(entry.type);
+                    repo_->addEntry(entry);
+                    view_.noteCount = repo_->countEntries();
+                    if (ui_) ui_->setPage(UiPage::JOURNAL);
+                }
+
                 setStatusMessage("Note enregistree.");
                 setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
                 logLine("[VJ][VOICE]", "Confirmation TTS");
@@ -885,6 +927,214 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
             setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
             setStatusMessage("Aide : note, bilan, lire, effacer");
             enqueueSpeech("Voici les commandes : note pour enregistrer, lis la derniere note, combien de notes, fais le bilan, ou efface les notes.");
+            break;
+        }
+
+        case CommandType::ADD_TASK: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (taskService_) {
+                uint32_t tid = 0;
+                uint32_t pid = projService_ ? projService_->getCurrentProjectId() : 0;
+                taskService_->addTask(cmd.payload.c_str(), pid, 0, tid);
+                if (repo_) view_.noteCount = repo_->countEntries();
+                if (ui_) ui_->setPage(UiPage::TASKS);
+                setStatusMessage("Tache ajoutee.");
+                enqueueSpeech("Tache ajoutee.");
+            } else {
+                enqueueSpeech("Service de taches non initialise.");
+            }
+            break;
+        }
+
+        case CommandType::LIST_TASKS: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (taskService_) {
+                if (ui_) ui_->setPage(UiPage::TASKS);
+                size_t openCount = taskService_->countOpenTasks();
+                String msg = String("Vous avez ") + String(static_cast<unsigned>(openCount)) + " taches en cours.";
+                setStatusMessage(msg);
+                enqueueSpeech(msg);
+            }
+            break;
+        }
+
+        case CommandType::COMPLETE_TASK: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (taskService_) {
+                auto matches = taskService_->findTasks(cmd.payload.c_str(), true);
+                if (!matches.empty()) {
+                    taskService_->completeTask(matches[0].id);
+                    if (ui_) ui_->setPage(UiPage::TASKS);
+                    setStatusMessage("Tache terminee.");
+                    enqueueSpeech("Tache terminee.");
+                } else {
+                    setStatusMessage("Tache non trouvee.");
+                    enqueueSpeech("Je n'ai pas trouve de tache correspondante.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::CANCEL_TASK: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (taskService_) {
+                auto matches = taskService_->findTasks(cmd.payload.c_str(), true);
+                if (!matches.empty()) {
+                    taskService_->cancelTask(matches[0].id);
+                    if (ui_) ui_->setPage(UiPage::TASKS);
+                    setStatusMessage("Tache annulee.");
+                    enqueueSpeech("Tache annulee.");
+                } else {
+                    setStatusMessage("Tache non trouvee.");
+                    enqueueSpeech("Je n'ai pas trouve de tache correspondante.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::RESOLVE_PROBLEM: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (repo_) {
+                VoiceJournal::EntryFilter ef;
+                ef.type = static_cast<int16_t>(VoiceJournal::EntryType::PROBLEM);
+                ef.status = static_cast<int16_t>(VoiceJournal::EntryStatus::OPEN);
+                auto pIds = repo_->queryEntryIds(ef);
+                bool resolved = false;
+                for (uint32_t pid : pIds) {
+                    VoiceJournal::JournalEntry pe;
+                    if (repo_->getEntry(pid, pe)) {
+                        pe.status = VoiceJournal::EntryStatus::RESOLVED;
+                        pe.updatedAt = timeService_ ? timeService_->getCurrentUtc() : 0;
+                        repo_->updateEntry(pe);
+                        resolved = true;
+                        break;
+                    }
+                }
+                if (resolved) {
+                    if (ui_) ui_->setPage(UiPage::JOURNAL);
+                    setStatusMessage("Probleme resolu.");
+                    enqueueSpeech("Le probleme est marque comme resolu.");
+                } else {
+                    enqueueSpeech("Aucun probleme ouvert correspondant trouve.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::SEARCH_NOTES: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (searchService_) {
+                VoiceJournal::SearchCriteria sc;
+                sc.textQuery = cmd.payload.c_str();
+                auto resList = searchService_->search(sc);
+                if (ui_) ui_->setJournalFilter(-1, -1, "Recherche");
+                String msg = String(static_cast<unsigned>(resList.size())) + " observations trouvees.";
+                setStatusMessage(msg);
+                enqueueSpeech(msg);
+            }
+            break;
+        }
+
+        case CommandType::SEARCH_BY_PROJECT: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (projService_ && searchService_) {
+                uint32_t pId = projService_->findProject(cmd.projectName.c_str());
+                if (pId > 0) {
+                    if (ui_) ui_->setJournalFilter(static_cast<int32_t>(pId), -1, cmd.projectName);
+                    auto resList = searchService_->searchByProject(pId);
+                    String msg = String("Projet ") + cmd.projectName + " : " + String(static_cast<unsigned>(resList.size())) + " entrees.";
+                    setStatusMessage(msg);
+                    enqueueSpeech(msg);
+                } else {
+                    enqueueSpeech(String("Projet ") + cmd.projectName + " inconnu.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::SEARCH_BY_DATE: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (searchService_) {
+                auto resList = searchService_->searchByRelativeDate(cmd.dateExpr.c_str());
+                if (ui_) ui_->setPage(UiPage::JOURNAL);
+                String msg = String("Pour ") + cmd.dateExpr + " : " + String(static_cast<unsigned>(resList.size())) + " observations.";
+                setStatusMessage(msg);
+                enqueueSpeech(msg);
+            }
+            break;
+        }
+
+        case CommandType::ANALYZE_PROJECT: {
+            if (analysisService_ && projService_) {
+                uint32_t pId = projService_->findProject(cmd.projectName.c_str());
+                if (pId == 0) pId = projService_->getCurrentProjectId();
+                if (pId > 0) {
+                    std::string prompt = analysisService_->buildProjectAnalysisPrompt(pId);
+                    pendingAiPrompt_ = String(prompt.c_str());
+                    hasPendingAiPrompt_ = true;
+                    pendingAiDispatchAtMs_ = nowMs + AppConfig::AI_DISPATCH_SETTLE_MS;
+                    setStatusMessage("Analyse du projet en cours...");
+                    setState(JournalState::ANALYZING);
+                } else {
+                    setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+                    enqueueSpeech("Projet non specifie ou inconnu.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::CREATE_PROJECT: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (projService_) {
+                uint32_t pId = 0;
+                if (projService_->createProject(cmd.projectName.c_str(), {}, pId)) {
+                    if (ui_) ui_->setPage(UiPage::PROJECTS);
+                    String msg = String("Projet ") + cmd.projectName + " cree.";
+                    setStatusMessage(msg);
+                    enqueueSpeech(msg);
+                } else {
+                    enqueueSpeech("Le projet existe deja ou le nom est invalide.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::OPEN_PROJECT: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (projService_) {
+                uint32_t pId = 0;
+                if (projService_->openProject(cmd.projectName.c_str(), pId)) {
+                    if (ui_) ui_->setPage(UiPage::PROJECTS);
+                    String msg = String("Projet ") + cmd.projectName + " ouvert.";
+                    setStatusMessage(msg);
+                    enqueueSpeech(msg);
+                } else {
+                    enqueueSpeech(String("Projet ") + cmd.projectName + " introuvable.");
+                }
+            }
+            break;
+        }
+
+        case CommandType::CLOSE_PROJECT: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (projService_) {
+                projService_->closeCurrentProject();
+                if (ui_) ui_->setPage(UiPage::PROJECTS);
+                setStatusMessage("Projet ferme.");
+                enqueueSpeech("Projet courant ferme.");
+            }
+            break;
+        }
+
+        case CommandType::LIST_PROJECTS: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            if (projService_) {
+                if (ui_) ui_->setPage(UiPage::PROJECTS);
+                auto projs = projService_->listProjects(true);
+                String msg = String("Vous avez ") + String(static_cast<unsigned>(projs.size())) + " projets.";
+                setStatusMessage(msg);
+                enqueueSpeech(msg);
+            }
             break;
         }
 

@@ -1,136 +1,73 @@
-# VoiceJournal v0.2.1 — Guide Utilisateur
+# VoiceJournal v0.3.0 — Guide Utilisateur (Structured Memory)
 
-Carnet de laboratoire vocal embarqué intelligent pour **M5Stack CoreS3**.
-
----
-
-## 1. À quoi sert VoiceJournal ?
-
-VoiceJournal permet aux ingénieurs et techniciens de dicter, consulter et analyser vocalement leurs observations de laboratoire directement sur un boîtier autonome M5Stack CoreS3, sans dépendre du cloud pour la compréhension des commandes locales.
-
-### Points forts de la version v0.2.1 (Consolidation) :
-- **Autonomie locale** : Reconnaissance locale instantanée (< 1 ms sur CoreS3) des commandes en français sans latence cloud.
-- **Protection stricte (COR-11 & COR-12)** : Rejet strict des entrées invalides (> 1024 octets, > 96 tokens, UTF-8 invalide). Aucune suppression accidentelle grâce à une validation centralisée et une confirmation en deux étapes strictement bornée.
-- **Grammaire renforcée (COR-13)** : Rejet des concepts isolés. Les commandes de lecture et de décompte ciblent obligatoirement le carnet ou les notes, refusant formellement les fichiers ou équipements.
-- **Bi-fournisseur IA** : Choix tactile direct entre OpenAI Realtime (par défaut au démarrage) et Google Gemini Live pour la dictée vocale et les synthèses de laboratoire.
-- **Conservation des notes** : Stockage non volatil NVS circulaire A/B (5 observations de 180 octets) préservé après coupure d'alimentation.
-- **Bouton STOP d'urgence** : Arrêt prioritaire immédiat en tout état (écoute, analyse, lecture audio).
-- **Diagnostic USB unifié (COR-14)** : Commandes série JSON sans effet de bord pour automatiser les tests ou connecter une interface PC.
-- **Mode SHADOW consolidé (COR-15)** : Comparaison miroir non destructive entre moteur contextuel et moteur historique.
+Bienvenue dans **VoiceJournal v0.3.0**, votre assistant vocal de laboratoire et de mémoire personnelle et technique pour **M5Stack CoreS3**.
 
 ---
 
-## 2. Interface tactile et boutons
+## 1. Nouveautés de la version v0.3.0
 
-L'écran LCD tactile 320 × 240 propose une interface sobre et claire :
+- **Mémoire structurée LittleFS (jusqu'à 1 000 entrées)** : dépassement définitif de la limite des 5 notes NVS. Vos observations sont conservées de manière sécurisée et organisée.
+- **Nouvelle interface graphique sous LVGL 9** : 4 pages épurées (**Accueil**, **Journal**, **Projets**, **Tâches**), vue de détail avec synthèse vocale TTS et bascule de statut.
+- **Typage des observations** : reconnaissance automatique des notes (`NOTE`), problèmes (`PROBLEM`), tâches (`TASK`), idées (`IDEA`), décisions (`DECISION`) et résultats (`RESULT`).
+- **Gestion des projets** : associez vos observations à un projet en cours (*« Ouvre le projet VoiceKit »*).
+- **Gestion des tâches avec échéances** : créez vos tâches par la voix (*« Je dois tester Gemini demain »*) et clôturez-les tactilement ou vocalement (*« La tâche tester Gemini est terminée »*).
+- **Moteur de recherche multicritère local** : retrouvez instantanément vos observations par mot-clé (*« Retrouve les observations sur la batterie »*) ou par date relative (*« Qu'ai-je noté hier ? »*).
+- **Bouton STOP d'urgence permanent** : interruption immédiate à tout instant d'un toucher sur le bouton STOP rouge en haut à droite.
+
+---
+
+## 2. Interface tactile LVGL 9
+
+L'écran LCD 320 × 240 propose 4 onglets en bas d'écran :
 
 ```text
 +-------------------------------------------------------------+
-| VoiceJournal v0.2.1         [LAB]         [PRET / VERT]     | <- En-tête
+| [PRET - OPENAI]   VoiceJournal v0.3.0              [ STOP ] | <- Bannière supérieure (h=36)
 +-------------------------------------------------------------+
 |                                                             |
-|  Notes : 3 / 5                [ IA: OPENAI ]  (o)           | <- Carte centrale
-|  ---------------------------------------------------------  |
-|  Derniere transcription :                                   |
-|  "Note, le filtre passe-bas fonctionne a 10 kHz."           |
+|                   ZONE D'AFFICHAGE ACTIVE                   | <- Contenu dynamique (h=168)
 |                                                             |
-|  ---------------------------------------------------------  |
-|  Observation enregistree (3/5)                              | <- Message d'état
 +-------------------------------------------------------------+
-|      [   PARLER   ]             |          [ STOP ]         | <- Boutons d'action
+|  [ Accueil ]   |   [ Journal ]   |  [ Projets ]  | [ Tâches ] | <- Barre d'onglets (h=36)
 +-------------------------------------------------------------+
 ```
 
-### Éléments de l'écran principal :
-1. **En-tête** :
-   - Titre applicatif : `VoiceJournal v0.2.1`.
-   - Bouton discret `[LAB]` : accès direct au Parsing Lab de diagnostic.
-   - Badge d'état : `PRET`, `ECOUTE`, `TRANSCRIPTION`, `ANALYSE IA`, `REPONSE AUDIO`, `ARRET`, `ERREUR`.
-2. **Carte centrale** :
-   - Compteur de notes actives : `Notes : X / 5`.
-   - Bouton `[ IA: OPENAI ]` ou `[ IA: GEMINI ]` : appuyer dessus bascule instantanément de fournisseur IA (anti-rebond de 350 ms).
-   - Pastille de connectivité (verte = connecté, orange = déconnecté).
-   - Affichage de la dernière phrase dictée ou réponse TTS.
-   - Message d'état explicite en bas de carte.
-3. **Zone d'action inférieure** :
-   - Bouton `[ PARLER ]` (bleu) / `[ TERMINER ]` (rouge) : PTT tactile à deux clics.
-   - Bouton `[ STOP ]` (rouge) : Annulation et interruption prioritaire immédiate.
+### 1. Onglet Accueil
+- Indique l'état du système, le réseau et le fournisseur d'IA actif (**OpenAI Realtime** ou **Google Gemini Live**).
+- Affiche le **projet courant actif**.
+- Résume les compteurs : total des entrées, tâches ouvertes, problèmes non résolus.
+- Bouton tactile `[ PARLER ]` pour démarrer ou stopper la capture vocale (Push-To-Talk).
+- Bouton sélecteur tactile `[ IA: OPENAI / GEMINI ]`.
+
+### 2. Onglet Journal
+- Affiche les observations sous forme de cartes structurées (3 par page).
+- Chaque carte indique le numéro `#ID`, le type (avec code couleur : bleu pour NOTE, rouge pour PROBLÈME, vert pour TÂCHE, jaune pour IDÉE, violet pour DÉCISION, cyan pour RÉSULTAT), l'heure locale et le texte.
+- Boutons `◀ Précédent` et `Suivant ▶` pour feuilleter les pages.
+- Toucher une carte ouvre la **vue Détail** : texte complet, boutons d'action **Lire** (synthèse vocale) et **Marquer résolu / terminé**.
+
+### 3. Onglet Projets
+- Liste l'ensemble des projets enregistrés.
+- Toucher un projet le définit immédiatement comme le **projet actif courant**.
+
+### 4. Onglet Tâches
+- Liste toutes les tâches actuellement ouvertes (`OPEN`).
+- Chaque tâche dispose d'un bouton direct **"Terminer"** permettant de la clôturer en un seul clic tactile.
 
 ---
 
-## 3. Commandes vocales disponibles (v0.2.1)
+## 3. Guide des commandes vocales
 
-VoiceJournal v0.2.1 propose un ensemble officiel de commandes fiables :
-
-| Fonction | Exemples d'expressions | Action réalisée |
+| Objectif | Exemples d'expressions | Résultat |
 |---|---|---|
-| **Ajouter une observation** | *« Note, le prototype fonctionne »*<br>*« Mémorise que Gemini se déconnecte »*<br>*« Enregistre la tension mesurée à 3,3 volts »* | Enregistre l'observation dans le carnet circulaire NVS et confirme vocalement. |
-| **Relire la dernière note** | *« Lis la dernière note »*<br>*« Relis mon observation »*<br>*« Lis ma note »* | Restitue vocalement le texte exact de la dernière observation enregistrée. |
-| **Compter les notes** | *« Combien de notes ? »*<br>*« Compte les observations »*<br>*« Nombre de notes »* | Énonce le nombre exact d'observations actuellement conservées. |
-| **Analyser le carnet** | *« Fais le bilan »*<br>*« Résume les observations »*<br>*« Analyse les notes »* | Envoie les observations au LLM actif (OpenAI/Gemini) et prononce la synthèse de laboratoire. |
-| **Effacer le carnet** | *« Efface toutes les notes »*<br>*« Supprime toutes les observations »*<br>*« Vide le carnet »* | Arme la demande d'effacement et invite vocalement à confirmer sous 30 secondes. |
-| **Confirmer la suppression** | *« Confirmer la suppression »*<br>*« Oui, je confirme la suppression »* | Efface définitivement toutes les notes du carnet NVS. |
-| **Annuler la suppression** | *« Annuler »*<br>*« Ne supprime pas les notes »*<br>*« Laisse tomber »* | Désarme immédiatement l'attente sans rien effacer. |
-| **Aide vocale** | *« Quelles sont les commandes ? »*<br>*« Aide »* | Présente vocalement la liste des commandes opérationnelles disponibles. |
-
-> [!IMPORTANT]
-> Les intentions expérimentales (*« Je dois tester Gemini demain »*, *« Retrouve les bugs de VoiceKit »*, *« Fais le bilan du projet X »*) sont reconnues mais répondent :  
-> *« Cette fonction sera disponible dans une prochaine version. »*
-
----
-
-## 4. Sécurité des suppressions (2 étapes)
-
-Pour garantir qu'aucune observation de laboratoire ne soit perdue par erreur :
-1. Une commande d'effacement doit explicitement cibler **le carnet** ou **l'ensemble des notes** (*« Efface toutes les notes »*).
-2. Une commande ciblant un fichier (*« Supprime le fichier de configuration »*) ou une note unitaire (*« Efface la dernière note »*) est formellement **refusée**.
-3. Lors de la demande, le CoreS3 demande : *« Confirmez-vous la suppression des notes ? Dites confirmer la suppression. »*
-4. Si vous dites *« Je ne confirme pas la suppression »*, *« Non »*, *« Annuler »*, ou appuyez sur **STOP**, la confirmation est désarmée et le carnet reste intact.
-5. Si aucune confirmation exacte n'est reçue dans un délai de **30 secondes**, la demande expire automatiquement.
-
----
-
-## 5. Accès au Parsing Lab (Diagnostic embarqué)
-
-En touchant le bouton discret `[LAB]` en haut à droite :
-- **Vue 1/3 (Résultat)** : Affiche la transcription brute, l'intention NLU, le statut clair (`AUTORISEE`, `FONCTION INDISPONIBLE`, `COMMANDE INCONNUE`, `COMMANDE AMBIGUE`, `REFUS DE SECURITE`), le score d'acceptation et le temps de parsing (en µs).
-- **Vue 2/3 (Contexte)** : Détaille l'action, l'objet, l'entité extraite, la date relative et la portée des négations.
-- **Vue 3/3 (Comparaison)** : Mode de comparaison miroir entre le moteur historique et le moteur contextuel.
-- Toucher `[RETOUR]` pour revenir à l'écran principal. Le bouton **STOP** reste opérationnel en permanence.
-
----
-
-## 6. Diagnostic série USB (PC)
-
-Connectez le CoreS3 à votre PC en USB (115 200 bauds) pour envoyer des commandes de test sans toucher aux notes réelles :
-```text
-PARSE Je dois tester Gemini demain
-PARSE_SHADOW Lis la derniere note
-PARSER_STATUS
-PARSER_HELP
-```
-Les réponses sont émises sous forme de JSON structuré immédiatement exploitable par un script ou une application PC. Voir [`SERIAL_PARSER_PROTOCOL.md`](./SERIAL_PARSER_PROTOCOL.md) pour la spécification complète.
-
----
-
-## 7. Dépannage matériel
-
-- **L'écran reste noir ou bloqué au démarrage** :
-  Vérifiez que le câble USB-C est bien connecté à un port fournissant au moins 1 A. Vérifiez dans `include/secrets.h` que le SSID Wi-Fi et les clés API sont correctement renseignés.
-- **Message « Erreur Wi-Fi »** :
-  L'ESP32-S3 ne supporte que la bande Wi-Fi 2,4 GHz. Assurez-vous que votre point d'accès n'est pas configuré uniquement en 5 GHz.
-- **La dictée vocale ne répond pas** :
-  Assurez-vous d'avoir cliqué une première fois sur `[ PARLER ]` (le bouton devient rouge `[ TERMINER ]`), dictez votre phrase distinctement à 15-20 cm des microphones du CoreS3, puis cliquez sur `[ TERMINER ]`.
-- **Interruption d'urgence** :
-  À tout moment, appuyez sur le bouton rouge `[ STOP ]` à l'écran : la lecture audio, l'enregistrement ou l'attente de confirmation s'interrompt instantanément.
-
----
-
-## 8. Documentation de référence
-
-- Architecture logicielle : [`ARCHITECTURE.md`](./ARCHITECTURE.md)
-- Guide du moteur contextuel C++17 : [`PARSER_GUIDE.md`](./PARSER_GUIDE.md)
-- Protocole série USB JSON : [`SERIAL_PARSER_PROTOCOL.md`](./SERIAL_PARSER_PROTOCOL.md)
-- Cahier de validation matérielle : [`HARDWARE_VALIDATION.md`](./HARDWARE_VALIDATION.md)
-- Vision v0.3.0 : [`ROADMAP.md`](./ROADMAP.md)
-- Rapport de consolidation v0.2.1 : [`CONSOLIDATION_REPORT_v0.2.1.md`](./CONSOLIDATION_REPORT_v0.2.1.md)
+| **Noter une observation** | *« Note que le prototype fonctionne »*<br>*« Mémorise la mesure de 120 mA »* | Enregistrée comme `NOTE` sous le projet courant. |
+| **Signaler un problème** | *« Enregistre un problème : Gemini se déconnecte »*<br>*« Problème : coupure WiFi sur le CoreS3 »* | Enregistrée comme `PROBLEM` (`OPEN`), visible dans les alertes. |
+| **Créer une tâche** | *« Je dois tester Gemini demain »*<br>*« Ajoute une tâche pour mesurer la mémoire »* | Enregistrée comme `TASK` (`OPEN`), visible dans l'onglet Tâches. |
+| **Clôturer une tâche** | *« La tâche tester Gemini est terminée »* | Tâche retrouvée et marquée `COMPLETED`. |
+| **Consulter les tâches** | *« Quelles sont mes tâches ? »*<br>*« Affiche les tâches »* | Bascule sur l'onglet Tâches et énonce le décompte vocal. |
+| **Créer un projet** | *« Crée le projet VoiceKit »* | Nouveau projet ajouté dans LittleFS. |
+| **Changer de projet courant** | *« Ouvre le projet VoiceKit »*<br>*« Travaille sur le projet RuleBot »* | Définit le projet actif. Les prochaines notes y seront rattachées. |
+| **Fermer le projet courant** | *« Ferme le projet courant »* | Réinitialise le contexte sans projet associé. |
+| **Lister les projets** | *« Quels sont mes projets ? »*<br>*« Liste les projets »* | Bascule sur l'onglet Projets. |
+| **Rechercher des notes** | *« Retrouve les observations sur Gemini »*<br>*« Cherche le problème d'alimentation »* | Recherche locale multicritère sans appel au cloud. |
+| **Bilan de laboratoire** | *« Fais le bilan »*<br>*« Fais le bilan du projet VoiceKit »* | L'IA (OpenAI/Gemini) produit une synthèse structurée des 10 dernières observations pertinentes. |
+| **Arrêt d'urgence** | Toucher le bouton rouge **STOP** | Interrompt immédiatement l'audio et la capture. |

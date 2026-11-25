@@ -14,6 +14,7 @@
 #include "parser/test_nlu_suite.h"
 #include "parser/test_contextual_suite.h"
 #include "parser/test_consolidation_v021_suite.h"
+#include "test_v030_structured_memory_suite.h"
 
 namespace {
 
@@ -1480,16 +1481,20 @@ int main() {
     std::printf("\n=== VoiceJournal v0.2.1 — Suite de consolidation (COR-11 a COR-15) ===\n");
     auto consolidationReport = VoiceJournal::Tests::runAllConsolidationTests();
 
-    const int totalPassed = g_passed + static_cast<int>(nluReport.passed) + static_cast<int>(contextualReport.passed) + static_cast<int>(consolidationReport.passed);
-    const int totalFailed = g_failed + static_cast<int>(nluReport.failed) + static_cast<int>(contextualReport.failed) + static_cast<int>(consolidationReport.failed);
+    // Suite VoiceJournal v0.3.0 Structured Memory
+    auto v030Report = VoiceJournal::Tests::runV030StructuredMemorySuite();
+
+    const int totalPassed = g_passed + static_cast<int>(nluReport.passed) + static_cast<int>(contextualReport.passed) + static_cast<int>(consolidationReport.passed) + static_cast<int>(v030Report.passed);
+    const int totalFailed = g_failed + static_cast<int>(nluReport.failed) + static_cast<int>(contextualReport.failed) + static_cast<int>(consolidationReport.failed) + static_cast<int>(v030Report.failed);
 
     std::printf("\n==================================================\n");
-    std::printf("Resultat Global VoiceJournal v0.2.1 Consolidation :\n");
+    std::printf("Resultat Global VoiceJournal v0.3.0 Structured Memory :\n");
     std::printf("  v0.1.1 Legacy        : %d PASS, %d FAIL\n", g_passed, g_failed);
     std::printf("  v0.2.0 NLU           : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
     std::printf("  v0.2.0.1 Context     : %zu PASS, %zu FAIL\n", contextualReport.passed, contextualReport.failed);
     std::printf("  v0.2.1 Consolidation : %zu PASS, %zu FAIL\n", consolidationReport.passed, consolidationReport.failed);
-    std::printf("  GRAND TOTAL          : %d PASS, %d FAIL\n", totalPassed, totalFailed);
+    std::printf("  v0.3.0 Structured    : %zu PASS, %zu FAIL\n", v030Report.passed, v030Report.failed);
+    std::printf("  TOTAL GLOBAL         : %d PASS, %d FAIL\n", totalPassed, totalFailed);
     std::printf("==================================================\n");
 
     return (totalFailed == 0) ? 0 : 1;

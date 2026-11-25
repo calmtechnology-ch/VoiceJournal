@@ -139,8 +139,17 @@ void evaluatePhrase(CommandRouter &router, const std::string &phrase,
   }
   std::cout << "\n";
 
-  if (cmd.type == CommandType::ADD_NOTE && !cmd.payload.isEmpty()) {
+  if (!cmd.payload.isEmpty()) {
     std::cout << "[Payload]            : \"" << cmd.payload.c_str() << "\"\n";
+  }
+  if (cmd.entryType != VoiceJournal::EntryType::NOTE) {
+    std::cout << "[Entry Type]         : " << VoiceJournal::entryTypeToString(cmd.entryType) << "\n";
+  }
+  if (!cmd.projectName.isEmpty()) {
+    std::cout << "[Project]            : \"" << cmd.projectName.c_str() << "\"\n";
+  }
+  if (!cmd.dateExpr.isEmpty()) {
+    std::cout << "[Date Expression]    : \"" << cmd.dateExpr.c_str() << "\"\n";
   }
 
   if (router.getParserMode() == ParserMode::SHADOW) {
@@ -300,11 +309,11 @@ void evaluateDataset(CommandRouter &router, const std::string &path) {
 
 int main(int argc, char *argv[]) {
   CommandRouter router(30000, ParserMode::INTELLIGENT);
+  router.setStructuredMemoryEnabled(true);
 
   std::cout << "==============================================================="
                "=================\n";
-  std::cout << "  VoiceJournal v0.2.1 — Simulateur Console NLU & Contextual "
-               "Parsing\n";
+  std::cout << "  VoiceJournal v0.3.0 — Simulateur NLU & Structured Memory\n";
   std::cout << "==============================================================="
                "=================\n";
 
@@ -340,6 +349,7 @@ int main(int argc, char *argv[]) {
 
   std::cout << "Commandes disponibles dans le simulateur interactif :\n";
   std::cout << "  mode legacy | mode intelligent | mode shadow\n";
+  std::cout << "  memory on   | memory off\n";
   std::cout << "  arm_clear   | cancel_clear\n";
   std::cout << "  test\n";
   std::cout << "  quit / exit\n";
@@ -375,6 +385,12 @@ int main(int argc, char *argv[]) {
     } else if (line == "cancel_clear") {
       router.cancelClearConfirmation();
       std::cout << "Confirmation de suppression annulee.\n";
+    } else if (line == "memory on") {
+      router.setStructuredMemoryEnabled(true);
+      std::cout << "Memoire structuree v0.3.0 : ACTIVEE\n";
+    } else if (line == "memory off") {
+      router.setStructuredMemoryEnabled(false);
+      std::cout << "Memoire structuree v0.3.0 : DESACTIVEE (mode compatibilite)\n";
     } else {
       evaluatePhrase(router, line, true);
     }

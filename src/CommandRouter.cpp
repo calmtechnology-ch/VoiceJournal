@@ -424,6 +424,64 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
     res.normalizedInput = String(res.parseResult.normalizedText.c_str());
     res.isExecutable = res.parseResult.executable;
 
+    if (structuredMemoryEnabled_) {
+        String norm = res.normalizedInput;
+        norm.trim();
+
+        if (norm.startsWith("cree le projet ") || norm.startsWith("creer le projet ")) {
+            res.type = CommandType::CREATE_PROJECT;
+            int idx = rawText.indexOf("projet");
+            res.projectName = (idx >= 0) ? rawText.substring(idx + 6) : "";
+            res.projectName.trim();
+            res.isExecutable = !res.projectName.isEmpty();
+            return res;
+        }
+        if (norm.startsWith("ouvre le projet ") || norm.startsWith("travaille sur le projet ")) {
+            res.type = CommandType::OPEN_PROJECT;
+            int idx = rawText.indexOf("projet");
+            res.projectName = (idx >= 0) ? rawText.substring(idx + 6) : "";
+            res.projectName.trim();
+            res.isExecutable = !res.projectName.isEmpty();
+            return res;
+        }
+        if (norm == "ferme le projet courant" || norm == "ferme le projet") {
+            res.type = CommandType::CLOSE_PROJECT;
+            res.isExecutable = true;
+            return res;
+        }
+        if (norm == "quels sont mes projets" || norm == "affiche mes projets" || norm == "liste les projets" || norm == "mes projets") {
+            res.type = CommandType::LIST_PROJECTS;
+            res.isExecutable = true;
+            return res;
+        }
+        if (norm == "quelles sont mes taches" || norm == "affiche mes taches" || norm == "liste mes taches" || norm == "mes taches" || norm == "quelles taches restent a faire" || norm == "affiche les taches" || norm == "quelles sont les taches") {
+            res.type = CommandType::LIST_TASKS;
+            res.isExecutable = true;
+            return res;
+        }
+        if (norm.startsWith("la tache ") && norm.indexOf("est terminee") != -1) {
+            res.type = CommandType::COMPLETE_TASK;
+            int start = rawText.indexOf("tache");
+            int end = rawText.indexOf("est terminee");
+            if (start >= 0 && end > start + 5) {
+                res.payload = rawText.substring(start + 5, end);
+            } else {
+                res.payload = rawText;
+            }
+            res.payload.trim();
+            res.isExecutable = true;
+            return res;
+        }
+        if (norm.startsWith("annule la tache ")) {
+            res.type = CommandType::CANCEL_TASK;
+            int start = rawText.indexOf("tache");
+            res.payload = (start >= 0) ? rawText.substring(start + 5) : "";
+            res.payload.trim();
+            res.isExecutable = true;
+            return res;
+        }
+    }
+
     using namespace VoiceJournal::Parser;
 
     // COR-11 : Validation centralisée des actions
@@ -461,23 +519,80 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
         return res;
     }
 
-    // 4. Intentions expérimentales : reconnues mais non exécutables (Section 12)
-    switch (res.parseResult.intent) {
-        case IntentId::SEARCH_NOTES:
-        case IntentId::ADD_TASK:
-        case IntentId::RESOLVE_PROBLEM:
-        case IntentId::LIST_TASKS:
-        case IntentId::SEARCH_BY_PROJECT:
-        case IntentId::SEARCH_BY_DATE:
-        case IntentId::ANALYZE_PROJECT:
-            if (pendingClear) {
-                cancelClearConfirmation();
-            }
-            res.type = CommandType::EXPERIMENTAL;
-            res.isExecutable = false;
-            return res;
-        default:
-            break;
+    // 4. Intentions expérimentales si mémoire structurée désactivée (v0.2.1)
+    if (!structuredMemoryEnabled_) {
+        switch (res.parseResult.intent) {
+            case IntentId::SEARCH_NOTES:
+            case IntentId::ADD_TASK:
+            case IntentId::RESOLVE_PROBLEM:
+            case IntentId::LIST_TASKS:
+            case IntentId::SEARCH_BY_PROJECT:
+            case IntentId::SEARCH_BY_DATE:
+            case IntentId::ANALYZE_PROJECT:
+                if (pendingClear) {
+                    cancelClearConfirmation();
+                }
+                res.type = CommandType::EXPERIMENTAL;
+                res.isExecutable = false;
+                return res;
+            default:
+                break;
+        }
+    } else {
+        // En mode v0.3.0 mémoire structurée activée
+        switch (res.parseResult.intent) {
+            case IntentId::ADD_TASK:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::ADD_TASK;
+                res.entryType = VoiceJournal::EntryType::TASK;
+                res.payload = res.parseResult.observationPayload.empty() ? rawText : String(res.parseResult.observationPayload.c_str());
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::LIST_TASKS:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::LIST_TASKS;
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::RESOLVE_PROBLEM:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::RESOLVE_PROBLEM;
+                res.payload = String(res.parseResult.observationPayload.c_str());
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::SEARCH_NOTES:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::SEARCH_NOTES;
+                res.payload = String(res.parseResult.observationPayload.c_str());
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::SEARCH_BY_PROJECT:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::SEARCH_BY_PROJECT;
+                res.projectName = String(res.parseResult.semanticFrame.entity.c_str());
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::SEARCH_BY_DATE:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::SEARCH_BY_DATE;
+                res.dateExpr = String(res.parseResult.semanticFrame.relativeDate.c_str());
+                res.isExecutable = true;
+                return res;
+
+            case IntentId::ANALYZE_PROJECT:
+                if (pendingClear) cancelClearConfirmation();
+                res.type = CommandType::ANALYZE_PROJECT;
+                res.projectName = String(res.parseResult.semanticFrame.entity.c_str());
+                res.isExecutable = true;
+                return res;
+
+            default:
+                break;
+        }
     }
 
     // 5. Gestion des commandes opérationnelles autorisées
@@ -493,6 +608,25 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
                 res.type = CommandType::ADD_NOTE;
                 res.payload = String(res.parseResult.observationPayload.c_str());
                 res.isExecutable = true;
+
+                if (structuredMemoryEnabled_) {
+                    String normPayload = normalizeText(res.payload);
+                    if (normPayload.startsWith("probleme") || normPayload.startsWith("bug") ||
+                        normPayload.startsWith("enregistre un probleme") || normPayload.indexOf("se deconnecte") != -1) {
+                        res.entryType = VoiceJournal::EntryType::PROBLEM;
+                    } else if (normPayload.startsWith("tache") || normPayload.startsWith("je dois") ||
+                               normPayload.startsWith("ajoute une tache")) {
+                        res.entryType = VoiceJournal::EntryType::TASK;
+                    } else if (normPayload.startsWith("idee") || normPayload.startsWith("j ai une idee")) {
+                        res.entryType = VoiceJournal::EntryType::IDEA;
+                    } else if (normPayload.startsWith("decision") || normPayload.startsWith("on decide")) {
+                        res.entryType = VoiceJournal::EntryType::DECISION;
+                    } else if (normPayload.startsWith("resultat") || normPayload.startsWith("mesure")) {
+                        res.entryType = VoiceJournal::EntryType::RESULT;
+                    } else {
+                        res.entryType = VoiceJournal::EntryType::NOTE;
+                    }
+                }
             }
             break;
 

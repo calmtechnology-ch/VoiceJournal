@@ -9,6 +9,16 @@
 #include "CommandRouter.h"
 #include "JournalStorage.h"
 
+namespace VoiceJournal {
+    class JournalRepository;
+    class ProjectService;
+    class TaskService;
+    class SearchService;
+    class AnalysisService;
+    class TimeService;
+}
+class JournalUI;
+
 #ifdef ARDUINO
 #include <VoiceKit.h>
 #endif
@@ -190,11 +200,6 @@ public:
                                                        : AiProvider::OPENAI;
     }
 
-    /**
-     * @brief Formate une transcription pour affichage propre (evite les transcriptions criees en tout majuscule).
-     */
-    static String formatDisplayTranscript(const String& raw);
-
 private:
     VoiceKit& voice_;
 };
@@ -270,6 +275,16 @@ public:
     using ViewUpdateCallback = std::function<void(const JournalViewModel&)>;
 
     VoiceController(IVoiceEngine& engine, JournalStorage& storage, CommandRouter& router);
+
+    void attachStructuredMemory(
+        VoiceJournal::JournalRepository* repo,
+        VoiceJournal::ProjectService* projService,
+        VoiceJournal::TaskService* taskService,
+        VoiceJournal::SearchService* searchService,
+        VoiceJournal::AnalysisService* analysisService,
+        VoiceJournal::TimeService* timeService,
+        JournalUI* ui
+    );
 
     /**
      * @brief Enregistre les callbacks aupres du moteur vocal et initialise la machine a etats.
@@ -356,6 +371,11 @@ public:
     size_t pendingSpeechCount() const { return ttsQueue_.size(); }
 
     /**
+     * @brief File TTS courte sécurisée.
+     */
+    bool enqueueSpeech(const String& text);
+
+    /**
      * @brief Formate une transcription pour affichage propre (evite les transcriptions criees en tout majuscule).
      */
     static String formatDisplayTranscript(const String& raw);
@@ -371,7 +391,6 @@ private:
     void processFinalTranscription(const String& text, uint32_t nowMs);
     void executeCommand(const CommandResult& cmd, uint32_t nowMs);
 
-    bool enqueueSpeech(const String& text);
     void pumpSpeechQueue(uint32_t nowMs);
     void pumpPendingAiPrompt(uint32_t nowMs);
     void cancelPendingAiPrompt();
@@ -412,4 +431,13 @@ private:
     bool ttsPlaybackActive_ = false;
     uint32_t stateEnteredAtMs_ = 0;
     uint32_t captureStartedAtMs_ = 0;
+
+    // Services structurés v0.3.0
+    VoiceJournal::JournalRepository* repo_ = nullptr;
+    VoiceJournal::ProjectService* projService_ = nullptr;
+    VoiceJournal::TaskService* taskService_ = nullptr;
+    VoiceJournal::SearchService* searchService_ = nullptr;
+    VoiceJournal::AnalysisService* analysisService_ = nullptr;
+    VoiceJournal::TimeService* timeService_ = nullptr;
+    JournalUI* ui_ = nullptr;
 };

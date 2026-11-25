@@ -1,9 +1,8 @@
 /**
  * @file main.cpp
- * @brief VoiceJournal v0.1.1 — Carnet de laboratoire vocal intelligent pour M5Stack CoreS3.
+ * @brief VoiceJournal v0.3.0 — Structured Memory pour M5Stack CoreS3.
  *
- * Utilise la facade publique <VoiceKit.h> (VoiceKit rev 16646c73acf01a8d57408391bc6de15a288b8910),
- * Preferences (NVS), et M5GFX (sans LVGL 9).
+ * Utilise la façade publique <VoiceKit.h>, LittleFS, LVGL 9 et M5Unified.
  */
 
 #include <Arduino.h>
@@ -16,6 +15,15 @@
 #include "JournalUI.h"
 #include "SerialParserProtocol.h"
 #include "VoiceController.h"
+
+#include "LittleFSFileSystem.h"
+#include "JournalRepository.h"
+#include "ProjectService.h"
+#include "TaskService.h"
+#include "SearchService.h"
+#include "AnalysisService.h"
+#include "TimeService.h"
+#include "StorageMigration.h"
 
 #if __has_include("secrets.h")
     #include "secrets.h"
@@ -59,82 +67,10 @@ String sanitizeApiKey(const char* raw) {
     return k;
 }
 
-// Tampon série aligné sur la capacité maximale du parser (1024 octets) + préfixes de commande (COR-14)
+// Tampon série aligné sur la capacité maximale (1152 octets)
 static char s_serialCmdBuf[1152];
 static size_t s_serialCmdLen = 0;
 static bool s_serialOverflow = false;
-
-void processSerialCommand(const char* line, CommandRouter& router) {
-    if (!line || *line == '\0') return;
-
-    String cmdStr(line);
-    cmdStr.trim();
-    if (cmdStr.length() == 0) return;
-
-    if (cmdStr.startsWith("PARSE ")) {
-        String input = cmdStr.substring(6);
-        input.trim();
-        const std::string textStd(input.c_str());
-        // Analyse avec le parser dans un contexte totalement isole (zero action metier, pas d'armement suppression)
-        auto pr = router.getParser().parse(textStd, false);
-        Serial.println(VoiceJournal::Protocol::formatParseJson(pr).c_str());
-    } else if (cmdStr.startsWith("PARSE_SHADOW ")) {
-        String input = cmdStr.substring(13);
-        input.trim();
-        // Routeur temporaire isole pour ne jamais modifier l'etat reel
-        CommandRouter tempRouter(AppConfig::CLEAR_CONFIRM_TIMEOUT_MS, ParserMode::SHADOW);
-        CommandResult res = tempRouter.routeShadow(input, millis());
-        Serial.println(VoiceJournal::Protocol::formatParseShadowJson(res, input.c_str()).c_str());
-    } else if (cmdStr == "PARSER_STATUS") {
-        Serial.println(VoiceJournal::Protocol::formatParserStatusJson(
-            AppConfig::APP_VERSION,
-            parserModeToLabel(router.getParserMode()),
-            static_cast<uint32_t>(ESP.getFreeHeap()),
-            static_cast<uint32_t>(ESP.getMaxAllocHeap()),
-            static_cast<uint32_t>(ESP.getFreePsram()),
-            VoiceJournal::Parser::GRAMMAR_RULE_COUNT,
-            VoiceJournal::Parser::PHRASE_COUNT
-        ).c_str());
-    } else if (cmdStr == "PARSER_HELP") {
-        Serial.println(VoiceJournal::Protocol::formatParserHelpJson().c_str());
-    } else {
-        Serial.println(VoiceJournal::Protocol::formatErrorJson("UNKNOWN_COMMAND", String("Commande inconnue : " + cmdStr).c_str()).c_str());
-    }
-}
-
-void pollSerialCommands(CommandRouter& router) {
-    // Limiter le travail par cycle de boucle pour préserver la réactivité de STOP et VoiceKit
-    size_t charsProcessed = 0;
-    while (Serial.available() > 0 && charsProcessed < 64) {
-        int c = Serial.read();
-        ++charsProcessed;
-        if (c < 0) break;
-        if (c == '\n' || c == '\r') {
-            if (s_serialOverflow) {
-                // Fin de ligne atteinte après débordement : émettre l'erreur JSON et réarmer
-                s_serialOverflow = false;
-                s_serialCmdLen = 0;
-                Serial.println(VoiceJournal::Protocol::formatErrorJson("INPUT_TOO_LONG", "Ligne serie depassant la capacite maximale (1152)").c_str());
-            } else if (s_serialCmdLen > 0) {
-                s_serialCmdBuf[s_serialCmdLen] = '\0';
-                processSerialCommand(s_serialCmdBuf, router);
-                s_serialCmdLen = 0;
-            }
-        } else {
-            if (s_serialOverflow) {
-                // Débordement actif : ignorer tout octet jusqu'au prochain saut de ligne
-                continue;
-            }
-            if (s_serialCmdLen + 1 < sizeof(s_serialCmdBuf)) {
-                s_serialCmdBuf[s_serialCmdLen++] = static_cast<char>(c);
-            } else {
-                // Débordement détecté : basculer en mode overflow et rejeter la ligne entière
-                s_serialOverflow = true;
-                s_serialCmdLen = 0;
-            }
-        }
-    }
-}
 
 } // namespace
 
@@ -148,7 +84,143 @@ static CommandRouter s_router(AppConfig::CLEAR_CONFIRM_TIMEOUT_MS);
 static VoiceController s_controller(s_voiceAdapter, s_storage, s_router);
 static JournalUI s_ui;
 
+// Services structurés v0.3.0
+static VoiceJournal::LittleFSFileSystem s_fs;
+static VoiceJournal::JournalRepository s_repo(&s_fs);
+static VoiceJournal::TimeService s_timeService;
+static VoiceJournal::ProjectService s_projectService(s_repo, s_timeService);
+static VoiceJournal::TaskService s_taskService(s_repo, s_timeService);
+static VoiceJournal::SearchService s_searchService(s_repo, s_timeService);
+static VoiceJournal::AnalysisService s_analysisService(s_repo, s_projectService, s_searchService, s_timeService);
+
 static uint32_t s_lastMemDiagMs = 0;
+
+namespace {
+
+void processSerialCommand(const char* line, CommandRouter& router) {
+    if (!line || *line == '\0') return;
+
+    String cmdStr(line);
+    cmdStr.trim();
+    if (cmdStr.length() == 0) return;
+
+    if (cmdStr.startsWith("PARSE ")) {
+        String input = cmdStr.substring(6);
+        input.trim();
+        const std::string textStd(input.c_str());
+        auto pr = router.getParser().parse(textStd, false);
+        Serial.println(VoiceJournal::Protocol::formatParseJson(pr).c_str());
+    } else if (cmdStr.startsWith("PARSE_SHADOW ")) {
+        String input = cmdStr.substring(13);
+        input.trim();
+        CommandRouter tempRouter(AppConfig::CLEAR_CONFIRM_TIMEOUT_MS, ParserMode::SHADOW);
+        CommandResult res = tempRouter.routeShadow(input, millis());
+        Serial.println(VoiceJournal::Protocol::formatParseShadowJson(res, input.c_str()).c_str());
+    } else if (cmdStr == "PARSER_STATUS") {
+        Serial.println(VoiceJournal::Protocol::formatParserStatusJson(
+            AppConfig::APP_VERSION,
+            parserModeToLabel(router.getParserMode()),
+            static_cast<uint32_t>(ESP.getFreeHeap()),
+            static_cast<uint32_t>(ESP.getMaxAllocHeap()),
+            static_cast<uint32_t>(ESP.getFreePsram()),
+            VoiceJournal::Parser::GRAMMAR_RULE_COUNT,
+            VoiceJournal::Parser::PHRASE_COUNT
+        ).c_str());
+    } else if (cmdStr == "JOURNAL_STATUS") {
+        Serial.println(VoiceJournal::Protocol::formatJournalStatusJson(
+            AppConfig::APP_VERSION,
+            s_repo.countEntries(),
+            s_repo.capacity(),
+            s_projectService.listProjects().size(),
+            s_taskService.countOpenTasks(),
+            s_repo.getUsedBytes(),
+            s_repo.getTotalBytes(),
+            s_timeService.isTimeReliable(),
+            s_projectService.getCurrentProjectName()
+        ).c_str());
+    } else if (cmdStr.startsWith("LIST_ENTRIES")) {
+        VoiceJournal::EntryFilter ef;
+        auto ids = s_repo.queryEntryIds(ef, 20);
+        Serial.println("[");
+        for (size_t i = 0; i < ids.size(); i++) {
+            VoiceJournal::JournalEntry e;
+            if (s_repo.getEntry(ids[i], e)) {
+                if (i > 0) Serial.println(",");
+                Serial.print(VoiceJournal::Protocol::formatEntryJson(e).c_str());
+            }
+        }
+        Serial.println("\n]");
+    } else if (cmdStr.startsWith("GET_ENTRY ")) {
+        uint32_t id = static_cast<uint32_t>(cmdStr.substring(10).toInt());
+        VoiceJournal::JournalEntry e;
+        if (s_repo.getEntry(id, e)) {
+            Serial.println(VoiceJournal::Protocol::formatEntryJson(e).c_str());
+        } else {
+            Serial.println(VoiceJournal::Protocol::formatErrorJson("NOT_FOUND", "Entree introuvable").c_str());
+        }
+    } else if (cmdStr == "LIST_PROJECTS") {
+        auto projs = s_projectService.listProjects(false);
+        Serial.println("[");
+        for (size_t i = 0; i < projs.size(); i++) {
+            if (i > 0) Serial.println(",");
+            Serial.print(VoiceJournal::Protocol::formatProjectJson(projs[i]).c_str());
+        }
+        Serial.println("\n]");
+    } else if (cmdStr == "LIST_TASKS") {
+        auto tasks = s_taskService.listTasks(false, -1, 50);
+        Serial.println("[");
+        for (size_t i = 0; i < tasks.size(); i++) {
+            if (i > 0) Serial.println(",");
+            Serial.print(VoiceJournal::Protocol::formatEntryJson(tasks[i]).c_str());
+        }
+        Serial.println("\n]");
+    } else if (cmdStr == "EXPORT_JOURNAL") {
+        Serial.println("{\"command\":\"EXPORT_START\",\"version\":\"0.3.0\"}");
+        VoiceJournal::EntryFilter ef;
+        auto ids = s_repo.queryEntryIds(ef, 1000);
+        for (uint32_t id : ids) {
+            VoiceJournal::JournalEntry e;
+            if (s_repo.getEntry(id, e)) {
+                Serial.println(VoiceJournal::Protocol::formatEntryJson(e).c_str());
+            }
+        }
+        Serial.println("{\"command\":\"EXPORT_END\",\"count\":" + String(static_cast<unsigned>(ids.size())) + "}");
+    } else if (cmdStr == "PARSER_HELP") {
+        Serial.println(VoiceJournal::Protocol::formatParserHelpJson().c_str());
+    } else {
+        Serial.println(VoiceJournal::Protocol::formatErrorJson("UNKNOWN_COMMAND", String("Commande inconnue : " + cmdStr).c_str()).c_str());
+    }
+}
+
+void pollSerialCommands(CommandRouter& router) {
+    size_t charsProcessed = 0;
+    while (Serial.available() > 0 && charsProcessed < 64) {
+        int c = Serial.read();
+        ++charsProcessed;
+        if (c < 0) break;
+        if (c == '\n' || c == '\r') {
+            if (s_serialOverflow) {
+                s_serialOverflow = false;
+                s_serialCmdLen = 0;
+                Serial.println(VoiceJournal::Protocol::formatErrorJson("INPUT_TOO_LONG", "Ligne serie depassant la capacite maximale (1152)").c_str());
+            } else if (s_serialCmdLen > 0) {
+                s_serialCmdBuf[s_serialCmdLen] = '\0';
+                processSerialCommand(s_serialCmdBuf, router);
+                s_serialCmdLen = 0;
+            }
+        } else {
+            if (s_serialOverflow) continue;
+            if (s_serialCmdLen + 1 < sizeof(s_serialCmdBuf)) {
+                s_serialCmdBuf[s_serialCmdLen++] = static_cast<char>(c);
+            } else {
+                s_serialOverflow = true;
+                s_serialCmdLen = 0;
+            }
+        }
+    }
+}
+
+} // namespace
 
 void setup() {
     Serial.begin(AppConfig::SERIAL_BAUD_RATE);
@@ -157,34 +229,60 @@ void setup() {
     Serial.println();
     Serial.printf("[VJ][BOOT] %s\n", AppConfig::APP_TITLE);
 
-    // 1. Initialisation materielle M5Stack CoreS3 (ecran, tactile, micro, haut-parleur)
+    // 1. Initialisation matérielle M5Stack CoreS3
     auto m5cfg = M5.config();
     m5cfg.internal_spk = true;
     m5cfg.internal_mic = true;
     M5.begin(m5cfg);
 
-    // 2. Initialisation du stockage local NVS avant toute operation reseau
+    // 2. Initialisation stockage NVS
     if (s_storage.begin()) {
         Serial.println("[VJ][STORAGE] NVS initialisee");
-        Serial.printf("[VJ][STORAGE] Notes: %u\n", static_cast<unsigned>(s_storage.count()));
     } else {
-        Serial.printf("[VJ][ERROR] Echec initialisation NVS: %s\n",
-                      s_storage.getLastError().c_str());
+        Serial.printf("[VJ][ERROR] Echec NVS: %s\n", s_storage.getLastError().c_str());
     }
 
-    // 3. Initialisation de l'interface tactile M5GFX (aucun ecran bloquant de connexion)
+    // 3. Montage LittleFS et initialisation JournalRepository
+    if (s_fs.begin()) {
+        Serial.println("[VJ][FS] LittleFS monte avec succes");
+        if (s_repo.begin()) {
+            Serial.printf("[VJ][REPO] Repository initialise (%u entrees en memoire)\n",
+                          static_cast<unsigned>(s_repo.countEntries()));
+        } else {
+            Serial.printf("[VJ][ERROR] Echec init repository : %s\n", s_repo.getLastError().c_str());
+        }
+    } else {
+        Serial.println("[VJ][WARN] Echec montage LittleFS (non formate automatiquement)");
+    }
+
+    // 4. Initialisation du service horaire (UTC + Europe/Zurich)
+    s_timeService.begin(true);
+
+    // 5. Migration automatique et idempotente NVS -> LittleFS
+    if (s_storage.getStore() && s_repo.isInitialized()) {
+        auto mig = VoiceJournal::StorageMigration::migrate(s_storage.getStore(), s_repo);
+        Serial.printf("[VJ][MIG] %s (notes migrees=%u)\n", mig.diagnostic.c_str(), static_cast<unsigned>(mig.notesMigrated));
+    }
+
+    // 6. Configuration du routeur en mode structuré v0.3.0
+    s_router.setStructuredMemoryEnabled(true);
+
+    // 7. Liaison des services au contrôleur et à l'IHM LVGL 9
+    s_ui.attachServices(&s_repo, &s_projectService, &s_taskService, &s_timeService);
+    s_controller.attachStructuredMemory(&s_repo, &s_projectService, &s_taskService, &s_searchService, &s_analysisService, &s_timeService, &s_ui);
+
     s_controller.onViewUpdated([](const JournalViewModel& vm) {
         s_ui.updateView(vm);
     });
+
     s_ui.begin(s_controller.getViewModel());
 
-    // 4. Configuration de VoiceKit (fournisseur initial centralise dans AppConfig.h)
+    // 8. Configuration de VoiceKit
     const AiProvider initialProvider = AppConfig::DEFAULT_AI_PROVIDER;
     const String openAiKey = sanitizeApiKey(OPENAI_KEY);
     const String geminiKey = sanitizeApiKey(GEMINI_KEY);
 
-    Serial.printf("[VJ][VOICE] Initialisation VoiceKit (fournisseur par defaut: %s)\n",
-                  aiProviderToLogString(initialProvider));
+    Serial.printf("[VJ][VOICE] Initialisation VoiceKit (%s)\n", aiProviderToLogString(initialProvider));
     s_controller.attachCallbacks();
 
     VoiceKitConfig cfg;
@@ -211,15 +309,12 @@ void setup() {
 
     if (!s_voiceAdapter.begin(cfg)) {
         String err = s_voiceAdapter.getLastError();
-        if (err.length() == 0) {
-            err = "Echec initialisation VoiceKit";
-        }
+        if (err.length() == 0) err = "Echec initialisation VoiceKit";
         s_controller.notifyInitError(err);
     } else {
         s_controller.syncProviderFromEngine();
         if (!s_voiceAdapter.hasApiKeyForProvider(initialProvider)) {
-            String err = String("Cle API ") + aiProviderToDisplayName(initialProvider) +
-                         " manquante (secrets.h)";
+            String err = String("Cle API ") + aiProviderToDisplayName(initialProvider) + " manquante (secrets.h)";
             s_controller.notifyInitError(err);
         }
     }
@@ -230,40 +325,80 @@ void setup() {
 void loop() {
     const uint32_t nowMs = millis();
 
-    // 1. Mise a jour materielle et tactile M5Stack
+    // 1. Mise à jour matérielle M5Unified et horloge
     M5.update();
+    s_timeService.update();
 
-    // 2. Mise a jour VoiceKit + machine a etats applicative (non bloquant)
+    // 2. Mise à jour VoiceKit + machine à états applicative
     s_controller.update(nowMs);
 
-    // 3. Traitement des evenements tactiles (avec anti-rebond)
+    // 3. Traitement des événements tactiles LVGL / direct
     const TouchAction action = s_ui.pollTouch(nowMs);
-    if (action == TouchAction::STOP) {
-        s_controller.onStopButtonPressed(nowMs);
-    } else if (action == TouchAction::TALK_TOGGLE) {
-        s_controller.onTalkButtonPressed(nowMs);
-    } else if (action == TouchAction::SWITCH_PROVIDER) {
-        s_controller.onSwitchProviderRequested(nowMs);
-    } else if (action == TouchAction::TOGGLE_LAB) {
-        s_controller.toggleLabView();
-    } else if (action == TouchAction::CYCLE_LAB_SUBPAGE) {
-        s_controller.cycleLabViewSubPage();
+    switch (action) {
+        case TouchAction::STOP:
+            s_controller.onStopButtonPressed(nowMs);
+            break;
+        case TouchAction::TALK_TOGGLE:
+            s_controller.onTalkButtonPressed(nowMs);
+            break;
+        case TouchAction::SWITCH_PROVIDER:
+            s_controller.onSwitchProviderRequested(nowMs);
+            break;
+        case TouchAction::NAV_HOME:
+            s_ui.setPage(UiPage::HOME);
+            break;
+        case TouchAction::NAV_JOURNAL:
+            s_ui.setPage(UiPage::JOURNAL);
+            break;
+        case TouchAction::NAV_PROJECTS:
+            s_ui.setPage(UiPage::PROJECTS);
+            break;
+        case TouchAction::NAV_TASKS:
+            s_ui.setPage(UiPage::TASKS);
+            break;
+        case TouchAction::RESOLVE_ENTRY: {
+            uint32_t eid = s_ui.getSelectedDetailEntryId();
+            VoiceJournal::JournalEntry entry;
+            if (s_repo.getEntry(eid, entry)) {
+                if (entry.type == VoiceJournal::EntryType::PROBLEM) {
+                    entry.status = (entry.status == VoiceJournal::EntryStatus::RESOLVED) ?
+                                   VoiceJournal::EntryStatus::OPEN : VoiceJournal::EntryStatus::RESOLVED;
+                } else if (entry.type == VoiceJournal::EntryType::TASK) {
+                    entry.status = (entry.status == VoiceJournal::EntryStatus::COMPLETED) ?
+                                   VoiceJournal::EntryStatus::OPEN : VoiceJournal::EntryStatus::COMPLETED;
+                }
+                entry.updatedAt = s_timeService.getCurrentUtc();
+                s_repo.updateEntry(entry);
+                s_ui.showEntryDetail(eid);
+            }
+            break;
+        }
+        case TouchAction::READ_ENTRY: {
+            uint32_t eid = s_ui.getSelectedDetailEntryId();
+            VoiceJournal::JournalEntry entry;
+            if (s_repo.getEntry(eid, entry)) {
+                s_controller.enqueueSpeech(entry.text.c_str());
+            }
+            break;
+        }
+        default:
+            break;
     }
 
-    // 4. Traitement du protocole de diagnostic serie USB (Section 17)
+    // 4. Protocole série USB
     pollSerialCommands(s_router);
 
-    // 4. Rafraichissement graphique conditionnel
+    // 5. Rendu graphique LVGL 9
     s_ui.renderIfNeeded();
 
-    // 5. Diagnostic memoire periodique leger (configurable / desactivable)
+    // 6. Diagnostic mémoire périodique
     if (AppConfig::MEMORY_DIAG_ENABLED &&
         (nowMs - s_lastMemDiagMs) >= AppConfig::MEMORY_DIAG_INTERVAL_MS) {
         s_lastMemDiagMs = nowMs;
-        Serial.printf("[VJ][BOOT] Mem heap=%u B | psram=%u B | notes=%u | state=%s\n",
+        Serial.printf("[VJ][DIAG] heap=%u B | psram=%u B | repo=%u | state=%s\n",
                       static_cast<unsigned>(ESP.getFreeHeap()),
                       static_cast<unsigned>(ESP.getFreePsram()),
-                      static_cast<unsigned>(s_storage.count()),
+                      static_cast<unsigned>(s_repo.countEntries()),
                       journalStateToLogString(s_controller.getState()));
     }
 
