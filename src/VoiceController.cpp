@@ -685,8 +685,10 @@ void VoiceController::processFinalTranscription(const String& text, uint32_t now
     view_.labData.intent = cmd.parseResult.intent;
     view_.labData.status = cmd.parseResult.status;
     view_.labData.score = cmd.parseResult.score;
+    view_.labData.rawScore = cmd.parseResult.rawScore;
     view_.labData.negationDetected = cmd.parseResult.negationDetected;
     view_.labData.fuzzyMatchUsed = cmd.parseResult.fuzzyMatchUsed;
+    view_.labData.ambiguityDetected = cmd.parseResult.ambiguityDetected;
     view_.labData.executable = cmd.parseResult.executable;
     view_.labData.durationUs = cmd.parseResult.processingTimeUs;
     view_.labData.isShadowMode = (router_.getParserMode() == ParserMode::SHADOW);
@@ -694,6 +696,15 @@ void VoiceController::processFinalTranscription(const String& text, uint32_t now
     view_.labData.intelligentIntentStr = VoiceJournal::Parser::intentToString(cmd.parseResult.intent);
     view_.labData.comparisonStr = cmd.comparisonStatus;
     view_.labData.blockedByDivergence = cmd.blockedByDivergence;
+    view_.labData.finalDecisionStr = commandTypeToString(cmd.type);
+
+    // Contexte sémantique (Vue 2)
+    view_.labData.action = String(cmd.parseResult.semanticFrame.action.c_str());
+    view_.labData.object = String(cmd.parseResult.semanticFrame.object.c_str());
+    view_.labData.targetCategory = String(VoiceJournal::Parser::targetCategoryToString(cmd.parseResult.semanticFrame.targetCategory));
+    view_.labData.relativeDate = String(cmd.parseResult.semanticFrame.relativeDate.c_str());
+    view_.labData.negationScope = String(cmd.parseResult.semanticFrame.negationScope.c_str());
+    view_.labData.recognizedPhrase = String(cmd.parseResult.semanticFrame.matchedPhrase.c_str());
 
     if (cmd.blockedByDivergence) {
         view_.labData.actionStatus = "BLOQUEE (DIVERGENCE)";
@@ -891,6 +902,11 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
 
 void VoiceController::toggleLabView() {
     view_.labViewActive = !view_.labViewActive;
+    publishView();
+}
+
+void VoiceController::cycleLabViewSubPage() {
+    view_.labViewSubPage = (view_.labViewSubPage + 1) % 3;
     publishView();
 }
 

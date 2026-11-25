@@ -1,0 +1,192 @@
+{
+  "rules": [
+    {
+      "id": "confirm_clear_exact",
+      "intent": "CONFIRM_CLEAR",
+      "priority": 100,
+      "baseScore": 100,
+      "executable": true,
+      "exactMatchRequired": true,
+      "rejectNegation": true,
+      "forbiddenTargets": ["FILE", "PROJECT", "DEVICE"]
+    },
+    {
+      "id": "cancel_clear_direct",
+      "intent": "CANCEL_CLEAR",
+      "priority": 95,
+      "baseScore": 95,
+      "executable": true,
+      "requiredConcepts": ["CANCEL"]
+    },
+    {
+      "id": "cancel_clear_negated_delete",
+      "intent": "CANCEL_CLEAR",
+      "priority": 95,
+      "baseScore": 95,
+      "executable": true,
+      "requiredConcepts": ["DELETE"],
+      "requiresNegation": true
+    },
+    {
+      "id": "add_note_prefix",
+      "intent": "ADD_NOTE",
+      "priority": 90,
+      "baseScore": 95,
+      "executable": true,
+      "startsWithConcept": "ADD",
+      "requireActionPayload": true
+    },
+    {
+      "id": "request_clear_all",
+      "intent": "REQUEST_CLEAR",
+      "priority": 85,
+      "baseScore": 95,
+      "executable": true,
+      "requiredConcepts": ["DELETE"],
+      "allowedTargets": ["JOURNAL", "JOURNAL_NOTE"],
+      "forbiddenTargets": ["FILE", "PROJECT", "DEVICE"],
+      "forbiddenConcepts": ["CONFIRM", "CANCEL", "QUESTION"],
+      "requireGlobalScope": true,
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "count_notes_query",
+      "intent": "COUNT_NOTES",
+      "priority": 80,
+      "baseScore": 90,
+      "executable": true,
+      "requiredConcepts": ["COUNT"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "read_last_note_cmd",
+      "intent": "READ_LAST_NOTE",
+      "priority": 80,
+      "baseScore": 90,
+      "executable": true,
+      "requiredConcepts": ["READ"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "analyze_notes_all",
+      "intent": "ANALYZE_NOTES",
+      "priority": 80,
+      "baseScore": 90,
+      "executable": true,
+      "requiredConcepts": ["ANALYZE"],
+      "rejectNegatedCommand": true,
+      "forbiddenEntities": true
+    },
+    {
+      "id": "analyze_project_cmd",
+      "intent": "ANALYZE_PROJECT",
+      "priority": 85,
+      "baseScore": 95,
+      "executable": false,
+      "requiredConcepts": ["ANALYZE"],
+      "requiresEntity": true,
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "help_cmd",
+      "intent": "HELP",
+      "priority": 75,
+      "baseScore": 90,
+      "executable": true,
+      "requiredConcepts": ["HELP"]
+    },
+    {
+      "id": "task_obligation",
+      "intent": "ADD_TASK",
+      "priority": 80,
+      "baseScore": 90,
+      "executable": false,
+      "requiredConcepts": ["OBLIGATION"],
+      "optionalConcepts": ["ACTION_VERB", "ENTITY", "DATE_RELATIVE"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedObligation": true,
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "task_keyword",
+      "intent": "ADD_TASK",
+      "priority": 75,
+      "baseScore": 85,
+      "executable": false,
+      "requiredConcepts": ["TASK"],
+      "forbiddenConcepts": ["READ", "DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "list_tasks_cmd",
+      "intent": "LIST_TASKS",
+      "priority": 80,
+      "baseScore": 90,
+      "executable": false,
+      "requiredConcepts": ["READ", "TASK"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "search_notes_query",
+      "intent": "SEARCH_NOTES",
+      "priority": 75,
+      "baseScore": 85,
+      "executable": false,
+      "requiredConcepts": ["SEARCH"],
+      "optionalConcepts": ["NOTE_TARGET", "PROBLEM", "ENTITY"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "search_by_project_cmd",
+      "intent": "SEARCH_BY_PROJECT",
+      "priority": 85,
+      "baseScore": 95,
+      "executable": false,
+      "requiredConcepts": ["SEARCH", "PROJECT"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "search_by_date_cmd",
+      "intent": "SEARCH_BY_DATE",
+      "priority": 85,
+      "baseScore": 95,
+      "executable": false,
+      "requiredConcepts": ["SEARCH", "DATE_RELATIVE"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "search_date_target",
+      "intent": "SEARCH_BY_DATE",
+      "priority": 85,
+      "baseScore": 95,
+      "executable": false,
+      "requiredConcepts": ["NOTE_TARGET", "DATE_RELATIVE"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "search_problem_only",
+      "intent": "SEARCH_NOTES",
+      "priority": 70,
+      "baseScore": 85,
+      "executable": false,
+      "requiredConcepts": ["PROBLEM"],
+      "forbiddenConcepts": ["RESOLVED", "DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    },
+    {
+      "id": "resolve_problem_cmd",
+      "intent": "RESOLVE_PROBLEM",
+      "priority": 75,
+      "baseScore": 90,
+      "executable": false,
+      "requiredConcepts": ["RESOLVED"],
+      "forbiddenConcepts": ["DELETE", "CANCEL"],
+      "rejectNegatedCommand": true
+    }
+  ]
+}

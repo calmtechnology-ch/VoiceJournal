@@ -58,6 +58,89 @@ String sanitizeApiKey(const char* raw) {
     return k;
 }
 
+static char s_serialCmdBuf[512];
+static size_t s_serialCmdLen = 0;
+
+void processSerialCommand(const char* line, CommandRouter& router) {
+    if (!line || *line == '\0') return;
+
+    String cmdStr(line);
+    cmdStr.trim();
+    if (cmdStr.length() == 0) return;
+
+    if (cmdStr.startsWith("PARSE ")) {
+        String input = cmdStr.substring(6);
+        input.trim();
+        const std::string textStd(input.c_str());
+        // Analyse avec le parser dans un contexte totalement isole (zero action metier, pas d'armement suppression)
+        auto pr = router.getParser().parse(textStd, false);
+
+        Serial.println("[VJ][PARSE_TEST]");
+        Serial.printf("Input: %s\n", pr.originalText.c_str());
+        Serial.printf("Intent: %s\n", VoiceJournal::Parser::intentToString(pr.intent));
+        Serial.printf("Action: %s\n", pr.semanticFrame.action.empty() ? "-" : pr.semanticFrame.action.c_str());
+        Serial.printf("Object: %s\n", pr.semanticFrame.object.empty() ? "-" : pr.semanticFrame.object.c_str());
+        Serial.printf("Entity: %s\n", pr.semanticFrame.entity.empty() ? "-" : pr.semanticFrame.entity.c_str());
+        Serial.printf("Date: %s\n", pr.semanticFrame.relativeDate.empty() ? "-" : pr.semanticFrame.relativeDate.c_str());
+        Serial.printf("Executable: %s\n", pr.executable ? "true" : "false");
+        Serial.printf("Status: %s\n", VoiceJournal::Parser::parseStatusToString(pr.status));
+        Serial.printf("Score: %u\n", static_cast<unsigned>(pr.score));
+        Serial.printf("Duration: %u us\n", static_cast<unsigned>(pr.processingTimeUs));
+    } else if (cmdStr.startsWith("PARSE_SHADOW ")) {
+        String input = cmdStr.substring(13);
+        input.trim();
+        // Routeur temporaire isole pour ne jamais modifier l'etat reel
+        CommandRouter tempRouter(AppConfig::CLEAR_CONFIRM_TIMEOUT_MS, ParserMode::SHADOW);
+        CommandResult res = tempRouter.routeShadow(input, millis());
+
+        Serial.println("[VJ][PARSE_SHADOW]");
+        Serial.printf("Input: %s\n", input.c_str());
+        Serial.printf("Legacy: %s\n", commandTypeToString(res.legacyType));
+        Serial.printf("Intelligent: %s\n", VoiceJournal::Parser::intentToString(res.parseResult.intent));
+        Serial.printf("Status: %s\n", res.comparisonStatus.c_str());
+        Serial.printf("Blocked: %s\n", res.blockedByDivergence ? "true" : "false");
+    } else if (cmdStr == "PARSER_STATUS") {
+        Serial.println("[VJ][PARSER_STATUS]");
+        Serial.println("Version: v0.2.0.1");
+        Serial.printf("Mode: %s\n", parserModeToLabel(router.getParserMode()));
+        Serial.printf("FreeRAM: %u B\n", static_cast<unsigned>(ESP.getFreeHeap()));
+        Serial.printf("MaxAllocBlock: %u B\n", static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        Serial.printf("PSRAM: %u B\n", static_cast<unsigned>(ESP.getFreePsram()));
+        Serial.printf("Rules: %u\n", static_cast<unsigned>(VoiceJournal::Parser::GRAMMAR_RULE_COUNT));
+        Serial.printf("Phrases: %u\n", static_cast<unsigned>(VoiceJournal::Parser::PHRASE_COUNT));
+    } else if (cmdStr == "PARSER_HELP") {
+        Serial.println("[VJ][PARSER_HELP]");
+        Serial.println("Commandes serie disponibles :");
+        Serial.println("  PARSE <texte>        : Teste le parsing contextuel sans modifier les notes");
+        Serial.println("  PARSE_SHADOW <texte> : Compare les moteurs Legacy et Intelligent (isole)");
+        Serial.println("  PARSER_STATUS        : Affiche l'etat memoire et les regles actives");
+        Serial.println("  PARSER_HELP          : Affiche cette aide");
+    } else {
+        Serial.printf("[VJ][ERROR] Commande serie inconnue : %s (Tapez PARSER_HELP)\n", cmdStr.c_str());
+    }
+}
+
+void pollSerialCommands(CommandRouter& router) {
+    while (Serial.available() > 0) {
+        int c = Serial.read();
+        if (c < 0) break;
+        if (c == '\n' || c == '\r') {
+            if (s_serialCmdLen > 0) {
+                s_serialCmdBuf[s_serialCmdLen] = '\0';
+                processSerialCommand(s_serialCmdBuf, router);
+                s_serialCmdLen = 0;
+            }
+        } else {
+            if (s_serialCmdLen + 1 < sizeof(s_serialCmdBuf)) {
+                s_serialCmdBuf[s_serialCmdLen++] = static_cast<char>(c);
+            } else {
+                Serial.println("[VJ][ERROR] Serial input too long (max 512 bytes)");
+                s_serialCmdLen = 0;
+            }
+        }
+    }
+}
+
 } // namespace
 
 // =============================================================================
@@ -168,7 +251,12 @@ void loop() {
         s_controller.onSwitchProviderRequested(nowMs);
     } else if (action == TouchAction::TOGGLE_LAB) {
         s_controller.toggleLabView();
+    } else if (action == TouchAction::CYCLE_LAB_SUBPAGE) {
+        s_controller.cycleLabViewSubPage();
     }
+
+    // 4. Traitement du protocole de diagnostic serie USB (Section 17)
+    pollSerialCommands(s_router);
 
     // 4. Rafraichissement graphique conditionnel
     s_ui.renderIfNeeded();

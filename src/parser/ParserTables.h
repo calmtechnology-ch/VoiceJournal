@@ -24,9 +24,16 @@ enum class ConceptId : uint8_t {
     PROJECT = 14,
     NOTE_TARGET = 15,
     NEGATION = 16,
+    OBLIGATION = 17,
+    FILE_TARGET = 18,
+    DEVICE_TARGET = 19,
+    ALL_QUANTIFIER = 20,
+    QUESTION = 21,
+    ACTION_VERB = 22,
 };
 
 namespace ConceptMask {
+    constexpr uint32_t NONE = 0u;
     constexpr uint32_t ADD = (1u << 0);
     constexpr uint32_t SEARCH = (1u << 1);
     constexpr uint32_t READ = (1u << 2);
@@ -43,6 +50,12 @@ namespace ConceptMask {
     constexpr uint32_t PROJECT = (1u << 13);
     constexpr uint32_t NOTE_TARGET = (1u << 14);
     constexpr uint32_t NEGATION = (1u << 15);
+    constexpr uint32_t OBLIGATION = (1u << 16);
+    constexpr uint32_t FILE_TARGET = (1u << 17);
+    constexpr uint32_t DEVICE_TARGET = (1u << 18);
+    constexpr uint32_t ALL_QUANTIFIER = (1u << 19);
+    constexpr uint32_t QUESTION = (1u << 20);
+    constexpr uint32_t ACTION_VERB = (1u << 21);
 }
 
 inline const char* conceptToString(ConceptId id) {
@@ -64,6 +77,72 @@ inline const char* conceptToString(ConceptId id) {
         case ConceptId::PROJECT: return "PROJECT";
         case ConceptId::NOTE_TARGET: return "NOTE_TARGET";
         case ConceptId::NEGATION: return "NEGATION";
+        case ConceptId::OBLIGATION: return "OBLIGATION";
+        case ConceptId::FILE_TARGET: return "FILE_TARGET";
+        case ConceptId::DEVICE_TARGET: return "DEVICE_TARGET";
+        case ConceptId::ALL_QUANTIFIER: return "ALL_QUANTIFIER";
+        case ConceptId::QUESTION: return "QUESTION";
+        case ConceptId::ACTION_VERB: return "ACTION_VERB";
+        default: return "UNKNOWN";
+    }
+}
+
+enum class SemanticRole : uint8_t {
+    UNKNOWN = 0,
+    SUBJECT = 1,
+    ACTION = 2,
+    OBJECT = 3,
+    ENTITY = 4,
+    QUANTIFIER = 5,
+    QUALIFIER = 6,
+    TIME = 7,
+    NEGATION = 8,
+    OBLIGATION = 9,
+    QUESTION = 10,
+    CONNECTOR = 11,
+    PAYLOAD = 12,
+};
+
+inline const char* semanticRoleToString(SemanticRole role) {
+    switch (role) {
+        case SemanticRole::UNKNOWN: return "UNKNOWN";
+        case SemanticRole::SUBJECT: return "SUBJECT";
+        case SemanticRole::ACTION: return "ACTION";
+        case SemanticRole::OBJECT: return "OBJECT";
+        case SemanticRole::ENTITY: return "ENTITY";
+        case SemanticRole::QUANTIFIER: return "QUANTIFIER";
+        case SemanticRole::QUALIFIER: return "QUALIFIER";
+        case SemanticRole::TIME: return "TIME";
+        case SemanticRole::NEGATION: return "NEGATION";
+        case SemanticRole::OBLIGATION: return "OBLIGATION";
+        case SemanticRole::QUESTION: return "QUESTION";
+        case SemanticRole::CONNECTOR: return "CONNECTOR";
+        case SemanticRole::PAYLOAD: return "PAYLOAD";
+        default: return "UNKNOWN";
+    }
+}
+
+enum class TargetCategory : uint8_t {
+    UNKNOWN_OBJECT = 0,
+    JOURNAL = 1,
+    JOURNAL_NOTE = 2,
+    TASK = 3,
+    PROJECT = 4,
+    PROBLEM = 5,
+    FILE = 6,
+    DEVICE = 7,
+};
+
+inline const char* targetCategoryToString(TargetCategory cat) {
+    switch (cat) {
+        case TargetCategory::UNKNOWN_OBJECT: return "UNKNOWN_OBJECT";
+        case TargetCategory::JOURNAL: return "JOURNAL";
+        case TargetCategory::JOURNAL_NOTE: return "JOURNAL_NOTE";
+        case TargetCategory::TASK: return "TASK";
+        case TargetCategory::PROJECT: return "PROJECT";
+        case TargetCategory::PROBLEM: return "PROBLEM";
+        case TargetCategory::FILE: return "FILE";
+        case TargetCategory::DEVICE: return "DEVICE";
         default: return "UNKNOWN";
     }
 }
@@ -181,7 +260,7 @@ struct LexiconEntry {
     uint32_t conceptMask;
 };
 
-constexpr size_t LEXICON_COUNT = 179;
+constexpr size_t LEXICON_COUNT = 231;
 inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"abandonne", 0x80u},
     {"abandonner", 0x80u},
@@ -201,6 +280,7 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"annulez", 0x80u},
     {"anomalie", 0x200u},
     {"anomalies", 0x200u},
+    {"appareil", 0x40000u},
     {"apres demain", 0x1000u},
     {"arrete", 0x80u},
     {"arreter", 0x80u},
@@ -209,6 +289,7 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"aucune", 0x8000u},
     {"aujourd hui", 0x1000u},
     {"avant hier", 0x1000u},
+    {"batterie", 0x40000u},
     {"bilan", 0x10u},
     {"bug", 0x200u},
     {"bugs", 0x200u},
@@ -219,16 +300,23 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"cherche", 0x2u},
     {"chercher", 0x2u},
     {"cible", 0x2000u},
-    {"combien", 0x8u},
+    {"code", 0x20000u},
+    {"combien", 0x100008u},
     {"commandes", 0x100u},
+    {"comment", 0x100000u},
+    {"compile", 0x200000u},
+    {"compiler", 0x200000u},
     {"composant", 0x2000u},
     {"compte", 0x8u},
     {"compter", 0x8u},
+    {"config", 0x20000u},
+    {"configuration", 0x20000u},
     {"confirmation", 0x40u},
     {"confirme", 0x40u},
     {"confirmer", 0x40u},
     {"consigne", 0x1u},
     {"consigner", 0x1u},
+    {"cores3", 0x40000u},
     {"corrige", 0x800u},
     {"corrigee", 0x800u},
     {"corriger", 0x800u},
@@ -237,17 +325,25 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"defauts", 0x200u},
     {"definitivement", 0x40u},
     {"demain", 0x1000u},
+    {"deploie", 0x200000u},
+    {"deployer", 0x200000u},
     {"dernier", 0x4u},
     {"derniere", 0x4u},
-    {"devoir", 0x400u},
-    {"dois", 0x400u},
-    {"doit", 0x400u},
+    {"devez", 0x10000u},
+    {"devoir", 0x10400u},
+    {"devons", 0x10000u},
+    {"document", 0x20000u},
+    {"documents", 0x20000u},
+    {"dois", 0x10400u},
+    {"doit", 0x10400u},
+    {"doivent", 0x10000u},
     {"dysfonctionnement", 0x200u},
     {"dysfonctionnements", 0x200u},
     {"echec", 0x200u},
     {"echecs", 0x200u},
     {"ecoute", 0x4u},
     {"ecouter", 0x4u},
+    {"ecran", 0x40000u},
     {"ecrire", 0x1u},
     {"ecris", 0x1u},
     {"efface", 0x20u},
@@ -255,29 +351,41 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"effacez", 0x20u},
     {"enregistre", 0x1u},
     {"enregistrer", 0x1u},
+    {"ensemble", 0x80000u},
     {"entree", 0x4000u},
     {"entrees", 0x4000u},
     {"erreur", 0x200u},
     {"erreurs", 0x200u},
+    {"esp32", 0x40000u},
     {"faire", 0x400u},
+    {"falloir", 0x10000u},
+    {"faut", 0x10000u},
+    {"fichier", 0x20000u},
+    {"fichiers", 0x20000u},
     {"fixe", 0x800u},
     {"fixer", 0x800u},
     {"fonctionnement", 0x100u},
     {"guere", 0x8000u},
     {"guide", 0x100u},
+    {"haut-parleur", 0x40000u},
     {"hier", 0x1000u},
     {"incident", 0x200u},
     {"incidents", 0x200u},
     {"inscrire", 0x1u},
+    {"integralite", 0x80000u},
     {"jamais", 0x8000u},
     {"journal", 0x4000u},
     {"laisse", 0x80u},
     {"lire", 0x4u},
     {"lis", 0x4u},
+    {"log", 0x20000u},
+    {"logs", 0x20000u},
     {"maintenant", 0x1000u},
     {"manuel", 0x100u},
+    {"materiel", 0x40000u},
     {"memorise", 0x1u},
     {"memoriser", 0x1u},
+    {"micro", 0x40000u},
     {"module", 0x2000u},
     {"n", 0x8000u},
     {"ne", 0x8000u},
@@ -295,13 +403,19 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"observe", 0x10u},
     {"observer", 0x10u},
     {"options", 0x100u},
+    {"oublie", 0x10000u},
+    {"oublier", 0x10000u},
     {"oui", 0x40u},
     {"panne", 0x200u},
     {"pannes", 0x200u},
     {"pas", 0x8000u},
+    {"pense", 0x10000u},
+    {"penser", 0x10000u},
+    {"pensez", 0x10000u},
     {"planifier", 0x400u},
     {"plus", 0x8000u},
     {"point", 0x8000u},
+    {"pourquoi", 0x100000u},
     {"precedent", 0x4u},
     {"precedente", 0x4u},
     {"prevoir", 0x400u},
@@ -312,6 +426,10 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"purger", 0x20u},
     {"purgez", 0x20u},
     {"quantite", 0x8u},
+    {"quel", 0x100000u},
+    {"quelle", 0x100000u},
+    {"quelles", 0x100000u},
+    {"quels", 0x100000u},
     {"rappeler", 0x2u},
     {"rappelle", 0x2u},
     {"raz", 0x20u},
@@ -319,6 +437,9 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"recapitulatif", 0x10u},
     {"recherche", 0x2u},
     {"rechercher", 0x2u},
+    {"refuse", 0x80u},
+    {"refuser", 0x80u},
+    {"refusez", 0x80u},
     {"regle", 0x800u},
     {"regler", 0x800u},
     {"reinitialise", 0x20u},
@@ -351,17 +472,252 @@ inline constexpr LexiconEntry LEXICON_TABLE[LEXICON_COUNT] = {
     {"systeme", 0x2000u},
     {"tache", 0x400u},
     {"taches", 0x400u},
+    {"test", 0x200000u},
+    {"teste", 0x200000u},
+    {"tester", 0x200000u},
     {"todo", 0x400u},
     {"tomber", 0x80u},
     {"total", 0x8u},
+    {"totalite", 0x80000u},
+    {"tous", 0x80000u},
+    {"tout", 0x80000u},
+    {"toute", 0x80000u},
+    {"toutes", 0x80000u},
     {"trouve", 0x2u},
     {"trouver", 0x2u},
     {"validation", 0x40u},
-    {"valide", 0x40u},
-    {"valider", 0x40u},
+    {"valide", 0x200040u},
+    {"valider", 0x200040u},
+    {"verifie", 0x200000u},
+    {"verifier", 0x200000u},
     {"vide", 0x20u},
     {"vider", 0x20u},
     {"videz", 0x20u},
+};
+
+struct PhraseEntry {
+    const char* phrase;
+    uint8_t tokenCount;
+    SemanticRole role;
+    ConceptId conceptId;
+    TargetCategory targetCategory;
+    bool isPositiveObligation;
+    bool isGlobalScope;
+};
+
+constexpr size_t PHRASE_COUNT = 51;
+inline constexpr PhraseEntry PHRASE_TABLE[PHRASE_COUNT] = {
+    {"le fichier de configuration", 4, SemanticRole::OBJECT, ConceptId::FILE_TARGET, TargetCategory::FILE, false, false},
+    {"donne moi une synthese", 4, SemanticRole::ACTION, ConceptId::ANALYZE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"je refuse de confirmer", 4, SemanticRole::NEGATION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"donne moi la synthese", 4, SemanticRole::ACTION, ConceptId::ANALYZE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"je ne confirme pas", 4, SemanticRole::NEGATION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"prevoir un test de", 4, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"quel est le nombre", 4, SemanticRole::QUESTION, ConceptId::COUNT, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"ne pas oublier de", 4, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"n oublie pas de", 4, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"je ne dois pas", 4, SemanticRole::NEGATION, ConceptId::NEGATION, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"la derniere observation", 3, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, false},
+    {"toutes les observations", 3, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, true},
+    {"combien d observations", 3, SemanticRole::QUESTION, ConceptId::COUNT, TargetCategory::JOURNAL_NOTE, false, false},
+    {"la semaine prochaine", 3, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"la semaine derniere", 3, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"tous les fichiers", 3, SemanticRole::OBJECT, ConceptId::FILE_TARGET, TargetCategory::FILE, false, true},
+    {"combien de notes", 3, SemanticRole::QUESTION, ConceptId::COUNT, TargetCategory::JOURNAL_NOTE, false, false},
+    {"la derniere note", 3, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, false},
+    {"toutes les notes", 3, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, true},
+    {"ne confirme pas", 3, SemanticRole::NEGATION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"ne supprime pas", 3, SemanticRole::NEGATION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"nombre de notes", 3, SemanticRole::QUESTION, ConceptId::COUNT, TargetCategory::JOURNAL_NOTE, false, false},
+    {"prevoir un test", 3, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"rappelle moi de", 3, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"ne pas oublier", 3, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"fais le bilan", 3, SemanticRole::ACTION, ConceptId::ANALYZE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"n oublie pas", 3, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"il faut que", 3, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"comment supprimer", 2, SemanticRole::QUESTION, ConceptId::QUESTION, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"les observations", 2, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, true},
+    {"mon observation", 2, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, false},
+    {"cette semaine", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"laisse tomber", 2, SemanticRole::ACTION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"apres demain", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"des fichiers", 2, SemanticRole::OBJECT, ConceptId::FILE_TARGET, TargetCategory::FILE, false, false},
+    {"les fichiers", 2, SemanticRole::OBJECT, ConceptId::FILE_TARGET, TargetCategory::FILE, false, false},
+    {"aujourd hui", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"avant hier", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"le fichier", 2, SemanticRole::OBJECT, ConceptId::FILE_TARGET, TargetCategory::FILE, false, false},
+    {"le journal", 2, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL, false, true},
+    {"prevoir de", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"prevoir un", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"je refuse", 2, SemanticRole::NEGATION, ConceptId::CANCEL, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"le carnet", 2, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL, false, true},
+    {"les notes", 2, SemanticRole::OBJECT, ConceptId::NOTE_TARGET, TargetCategory::JOURNAL_NOTE, false, true},
+    {"ce matin", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"penser a", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"ce soir", 2, SemanticRole::TIME, ConceptId::DATE_RELATIVE, TargetCategory::UNKNOWN_OBJECT, false, false},
+    {"il faut", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"je dois", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+    {"pense a", 2, SemanticRole::OBLIGATION, ConceptId::OBLIGATION, TargetCategory::UNKNOWN_OBJECT, true, false},
+};
+
+struct GrammarRule {
+    const char* id;
+    IntentId intent;
+    uint8_t priority;
+    uint8_t baseScore;
+    bool executable;
+    uint32_t requiredConcepts;
+    uint32_t optionalConcepts;
+    uint32_t forbiddenConcepts;
+    uint16_t allowedTargetsMask;
+    uint16_t forbiddenTargetsMask;
+    ConceptId startsWithConcept;
+    bool exactMatchRequired;
+    bool requireActionPayload;
+    bool requireGlobalScope;
+    bool rejectNegatedCommand;
+    bool rejectNegatedObligation;
+    bool requiresEntity;
+    bool forbiddenEntities;
+    bool requiresNegation;
+    bool rejectNegation;
+};
+
+constexpr size_t GRAMMAR_RULE_COUNT = 19;
+inline constexpr GrammarRule GRAMMAR_RULES[GRAMMAR_RULE_COUNT] = {
+    {
+        "confirm_clear_exact", IntentId::CONFIRM_CLEAR, 100, 100, true,
+        0x0u, 0x0u, 0x0u,
+        0x0u, 0xd0u,
+        ConceptId::NONE, true, false, false,
+        false, false, false, false, false, true
+    },
+    {
+        "cancel_clear_direct", IntentId::CANCEL_CLEAR, 95, 95, true,
+        0x80u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        false, false, false, false, false, false
+    },
+    {
+        "cancel_clear_negated_delete", IntentId::CANCEL_CLEAR, 95, 95, true,
+        0x20u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        false, false, false, false, true, false
+    },
+    {
+        "add_note_prefix", IntentId::ADD_NOTE, 90, 95, true,
+        0x0u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::ADD, false, true, false,
+        false, false, false, false, false, false
+    },
+    {
+        "request_clear_all", IntentId::REQUEST_CLEAR, 85, 95, true,
+        0x20u, 0x0u, 0x1000c0u,
+        0x6u, 0xd0u,
+        ConceptId::NONE, false, false, true,
+        true, false, false, false, false, false
+    },
+    {
+        "count_notes_query", IntentId::COUNT_NOTES, 80, 90, true,
+        0x8u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "read_last_note_cmd", IntentId::READ_LAST_NOTE, 80, 90, true,
+        0x4u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "analyze_notes_all", IntentId::ANALYZE_NOTES, 80, 90, true,
+        0x10u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, true, false, false
+    },
+    {
+        "analyze_project_cmd", IntentId::ANALYZE_PROJECT, 85, 95, false,
+        0x10u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, true, false, false, false
+    },
+    {
+        "help_cmd", IntentId::HELP, 75, 90, true,
+        0x100u, 0x0u, 0x0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        false, false, false, false, false, false
+    },
+    {
+        "task_obligation", IntentId::ADD_TASK, 80, 90, false,
+        0x10000u, 0x201000u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, true, false, false, false, false
+    },
+    {
+        "task_keyword", IntentId::ADD_TASK, 75, 85, false,
+        0x400u, 0x0u, 0xa4u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "list_tasks_cmd", IntentId::LIST_TASKS, 80, 90, false,
+        0x404u, 0x0u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "search_notes_query", IntentId::SEARCH_NOTES, 75, 85, false,
+        0x2u, 0x4200u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "search_by_project_cmd", IntentId::SEARCH_BY_PROJECT, 85, 95, false,
+        0x2002u, 0x0u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "search_by_date_cmd", IntentId::SEARCH_BY_DATE, 85, 95, false,
+        0x1002u, 0x0u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "search_date_target", IntentId::SEARCH_BY_DATE, 85, 95, false,
+        0x5000u, 0x0u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "search_problem_only", IntentId::SEARCH_NOTES, 70, 85, false,
+        0x200u, 0x0u, 0x8a0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
+    {
+        "resolve_problem_cmd", IntentId::RESOLVE_PROBLEM, 75, 90, false,
+        0x800u, 0x0u, 0xa0u,
+        0x0u, 0x0u,
+        ConceptId::NONE, false, false, false,
+        true, false, false, false, false, false
+    },
 };
 
 struct EntityAliasEntry {

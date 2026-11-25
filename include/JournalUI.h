@@ -11,10 +11,11 @@
  */
 enum class TouchAction : uint8_t {
     NONE = 0,
-    TALK_TOGGLE,    ///< Clic sur [PARLER / TERMINER]
-    STOP,           ///< Clic prioritaire sur [STOP]
-    SWITCH_PROVIDER,///< Clic sur le selecteur de fournisseur [OPENAI / GEMINI]
-    TOGGLE_LAB      ///< Clic sur [LAB] ou [RETOUR] pour basculer la vue diagnostic Parsing Lab
+    TALK_TOGGLE,     ///< Clic sur [PARLER / TERMINER]
+    STOP,            ///< Clic prioritaire sur [STOP]
+    SWITCH_PROVIDER, ///< Clic sur le selecteur de fournisseur [OPENAI / GEMINI]
+    TOGGLE_LAB,      ///< Clic sur [LAB] ou [RETOUR] pour basculer la vue diagnostic Parsing Lab
+    CYCLE_LAB_SUBPAGE///< Clic sur [VUE 1/3] pour changer de sous-vue Parsing Lab (Section 18)
 };
 
 /**
@@ -58,6 +59,11 @@ public:
     static constexpr int BTN_LAB_Y = 4;
     static constexpr int BTN_LAB_W = 48;
     static constexpr int BTN_LAB_H = 22;
+
+    static constexpr int BTN_LAB_SUBPAGE_X = 136;
+    static constexpr int BTN_LAB_SUBPAGE_Y = 38;
+    static constexpr int BTN_LAB_SUBPAGE_W = 80;
+    static constexpr int BTN_LAB_SUBPAGE_H = 24;
 
     static constexpr int BTN_LAB_RETOUR_X = 224;
     static constexpr int BTN_LAB_RETOUR_Y = 38;

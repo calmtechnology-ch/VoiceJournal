@@ -1,0 +1,398 @@
+{
+  "phrases": [
+    {
+      "phrase": "je dois",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "il faut que",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "il faut",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "penser a",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "pense a",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "ne pas oublier de",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "ne pas oublier",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "n oublie pas de",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "n oublie pas",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "rappelle moi de",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "prevoir un test de",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "prevoir un test",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "prevoir un",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "prevoir de",
+      "role": "OBLIGATION",
+      "concept": "OBLIGATION",
+      "isPositiveObligation": true,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "la derniere note",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "la derniere observation",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "mon observation",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "toutes les notes",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "les notes",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "toutes les observations",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "les observations",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "je refuse de confirmer",
+      "role": "NEGATION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "je refuse",
+      "role": "NEGATION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "tous les fichiers",
+      "role": "OBJECT",
+      "concept": "FILE_TARGET",
+      "targetCategory": "FILE",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "le fichier de configuration",
+      "role": "OBJECT",
+      "concept": "FILE_TARGET",
+      "targetCategory": "FILE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "le fichier",
+      "role": "OBJECT",
+      "concept": "FILE_TARGET",
+      "targetCategory": "FILE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "des fichiers",
+      "role": "OBJECT",
+      "concept": "FILE_TARGET",
+      "targetCategory": "FILE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "les fichiers",
+      "role": "OBJECT",
+      "concept": "FILE_TARGET",
+      "targetCategory": "FILE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "le carnet",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "le journal",
+      "role": "OBJECT",
+      "concept": "NOTE_TARGET",
+      "targetCategory": "JOURNAL",
+      "isPositiveObligation": false,
+      "isGlobalScope": true
+    },
+    {
+      "phrase": "ce matin",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "ce soir",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "cette semaine",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "la semaine derniere",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "la semaine prochaine",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "aujourd hui",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "apres demain",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "avant hier",
+      "role": "TIME",
+      "concept": "DATE_RELATIVE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "fais le bilan",
+      "role": "ACTION",
+      "concept": "ANALYZE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "donne moi une synthese",
+      "role": "ACTION",
+      "concept": "ANALYZE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "donne moi la synthese",
+      "role": "ACTION",
+      "concept": "ANALYZE",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "combien de notes",
+      "role": "QUESTION",
+      "concept": "COUNT",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "combien d observations",
+      "role": "QUESTION",
+      "concept": "COUNT",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "nombre de notes",
+      "role": "QUESTION",
+      "concept": "COUNT",
+      "targetCategory": "JOURNAL_NOTE",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "quel est le nombre",
+      "role": "QUESTION",
+      "concept": "COUNT",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "je ne dois pas",
+      "role": "NEGATION",
+      "concept": "NEGATION",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "je ne confirme pas",
+      "role": "NEGATION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "ne confirme pas",
+      "role": "NEGATION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "ne supprime pas",
+      "role": "NEGATION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "laisse tomber",
+      "role": "ACTION",
+      "concept": "CANCEL",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    },
+    {
+      "phrase": "comment supprimer",
+      "role": "QUESTION",
+      "concept": "QUESTION",
+      "targetCategory": "UNKNOWN_OBJECT",
+      "isPositiveObligation": false,
+      "isGlobalScope": false
+    }
+  ]
+}

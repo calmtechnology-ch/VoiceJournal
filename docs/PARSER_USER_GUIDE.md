@@ -1,107 +1,114 @@
-# Guide Utilisateur du Moteur NLU — VoiceJournal v0.2.0
+# Guide Utilisateur du Moteur Contextuel — VoiceJournal v0.2.0.1
 
-Ce guide explique comment utiliser, configurer, tester et inspecter le moteur de compréhension du langage naturel de **VoiceJournal v0.2.0**.
-
----
-
-## 1. Utilisation Vocale sur M5Stack CoreS3
-
-### 1.1 Dictée d'une observation (`ADD_NOTE`)
-Appuyez brièvement sur le bouton physique/tactile `[PARLER]`, parlez, puis appuyez sur `[TERMINER]`.
-- *Exemples reconnus :*
-  - *« Note, le CoreS3 consomme 120 mA en veille »*
-  - *« Mémorise que le WiFi 2.4 GHz fonctionne parfaitement »*
-  - *« Enregistre : tension mesurée à 3,3 V »*
-  - *« Retiens d'ajuster le gain micro »*
-- **Préservation intégrale :** Les accents, majuscules et signes de ponctuation sont conservés en mémoire NVS.
-
-### 1.2 Consultation et Synthèse
-- **Relire la dernière note :** *« Lis la dernière note »*, *« Relis mon observation »*.
-- **Compter les notes :** *« Combien de notes ? »*, *« Compte les observations »*, *« Quel est le nombre de notes ? »*.
-- **Synthèse IA globale :** *« Fais le bilan »*, *« Résume les observations »*, *« Donne-moi la synthèse »*.
-- **Demande d'aide :** *« Aide »*, *« Quelles sont les commandes ? »*.
-
-### 1.3 Effacement Sécurisé en Deux Étapes
-1. **Étape 1 : Demande d'effacement**
-   - Prononcez : *« Efface toutes les notes »*, *« Supprime le carnet »*, ou *« Réinitialise les observations »*.
-   - VoiceJournal confirme vocalement la mise en attente et active une fenêtre de 15 secondes.
-2. **Étape 2 : Confirmation explicite ou Annulation**
-   - **Pour confirmer :** Prononcez une formule explicite telle que *« Confirmer la suppression »*, *« Oui efface »*, ou *« Supprimer définitivement »*.
-   - **Pour annuler :** Prononcez *« Annuler »*, *« Ne supprime pas »*, *« Laisse tomber »*, appuyez sur `[STOP]`, ou laissez simplement expirer le délai de 15 secondes.
-   - *Sécurité :* Dire simplement *« oui »* ou formuler une négation (*« Je ne confirme pas »*) annule immédiatement l'effacement.
+Ce guide détaille les formulations orales supportées en français par VoiceJournal v0.2.0.1, le fonctionnement du Parsing Lab sur écran M5Stack CoreS3 et les garanties de sécurité appliquées.
 
 ---
 
-## 2. Le Parsing Lab sur M5Stack CoreS3
+## 1. Formulations Exécutables (Actions Réelles sur le Carnet)
 
-VoiceJournal v0.2.0 embarque un écran de diagnostic temps réel accessible directement sur l'écran tactile du CoreS3.
+Les commandes suivantes modifient ou consultent l'état persistant du carnet en mémoire NVS :
 
-### 2.1 Accéder au Parsing Lab
-1. Sur l'écran principal, repérez le bouton tactile **`[LAB]`** situé en haut à droite.
-2. Appuyez sur **`[LAB]`** : l'écran bascule instantanément vers la vue diagnostique.
-3. Pour revenir à la vue principale, appuyez sur le bouton **`[RETOUR]`** situé au même emplacement.
-4. **Priorité absolue de STOP :** Le bouton `STOP` rouge situé en bas de l'écran reste constamment actif, y compris en mode Parsing Lab.
+### 1.1 Ajout d'une observation (`ADD_NOTE`)
+La commande d'ajout accepte plusieurs verbes d'introduction. La charge utile dictée commence immédiatement après le verbe introductif et est conservée telle quelle (casse, accents, signes de ponctuation, acronymes techniques).
 
-### 2.2 Informations affichées dans le Parsing Lab
-- **Transcription reçue :** Le texte exact retourné par le service STT (OpenAI ou Gemini).
-- **Intention & Confiance :** L'intention identifiée (ex. `ADD_NOTE`, `SEARCH_NOTES`) et son score (sur 100).
-- **Concepts & Entités :** Liste des masques conceptuels et entités techniques reconnues (ex. `Gemini`, `CoreS3`).
-- **Négation & Fuzzy :** Indicateurs confirmant si une négation ou une correction approximative a été sollicitée.
-- **Temps d'exécution NLU :** Durée exacte du parsing en microsecondes (typiquement 200 à 400 µs).
-- **Statut Comparatif (Mode Shadow) :** Indique la corrélation avec le moteur legacy (`MATCH`, `NEW_INTENT`, `SECURITY_BLOCKED`).
+| Formulation | Intention | Comportement |
+|---|---|---|
+| *"Note, tension mesurée à 3.3 volts"* | `ADD_NOTE` | Ajoute l'observation en NVS |
+| *"Mémorise que Gemini se déconnecte"* | `ADD_NOTE` | Ajoute l'observation en NVS |
+| *"Enregistre : le capteur répond sur bus I2C"* | `ADD_NOTE` | Ajoute l'observation en NVS |
+| *"Retiens la configuration du prototype"* | `ADD_NOTE` | Ajoute l'observation en NVS |
+| *"Note, ne supprime pas les fichiers"* | `ADD_NOTE` | **Sécurisé** : la négation est dans la note, l'ajout est effectué |
+| *"Mémorise que le voyant ne s'allume pas"* | `ADD_NOTE` | **Sécurisé** : contenu préservé intégralement |
+
+### 1.2 Consultation vocale (`READ_LAST_NOTE`, `COUNT_NOTES`)
+| Formulation | Intention | Comportement |
+|---|---|---|
+| *"Lis la dernière note"* | `READ_LAST_NOTE` | Lit la dernière note via TTS |
+| *"Relis mon observation"* | `READ_LAST_NOTE` | Lit la dernière note via TTS |
+| *"Écoute la dernière note"* | `READ_LAST_NOTE` | Lit la dernière note via TTS |
+| *"Combien de notes ?"* | `COUNT_NOTES` | Énonce le nombre d'observations |
+| *"Quel est le nombre d'observations ?"* | `COUNT_NOTES` | Énonce le nombre d'observations |
+| *"Compte les notes"* | `COUNT_NOTES` | Énonce le nombre d'observations |
+
+### 1.3 Synthèse globale par IA (`ANALYZE_NOTES`)
+| Formulation | Intention | Comportement |
+|---|---|---|
+| *"Fais le bilan"* | `ANALYZE_NOTES` | Demande une synthèse des notes à l'IA |
+| *"Résume les observations"* | `ANALYZE_NOTES` | Demande une synthèse des notes à l'IA |
+| *"Donne-moi une synthèse"* | `ANALYZE_NOTES` | Demande une synthèse des notes à l'IA |
+| *"Qu'avons-nous observé ?"* | `ANALYZE_NOTES` | Demande une synthèse des notes à l'IA |
+
+### 1.4 Effacement sécurisé du carnet (`REQUEST_CLEAR`, `CONFIRM_CLEAR`, `CANCEL_CLEAR`)
+VoiceJournal applique un protocole d'effacement destructif en 2 étapes strictement borné :
+
+1. **Demande d'effacement (`REQUEST_CLEAR`)** :
+   - Formulations valides : *"Efface toutes les notes"*, *"Supprime toutes les observations"*, *"Vide le carnet"*, *"Supprime les notes"*.
+   - Déclenche un compte à rebours de 30 secondes en attente d'une confirmation explicite.
+2. **Confirmation obligatoire (`CONFIRM_CLEAR`)** :
+   - Formulations acceptées uniquement pendant l'attente : *"Confirmer la suppression"*, *"Oui efface"*, *"Supprimer définitivement"*, *"Valider la suppression"*.
+   - **Garde-fous stricts** : aucun rapprochement approximatif (fuzzy) n'est toléré sur la confirmation. Une formulation vague comme *"Oui"* ou *"D'accord"* est rejetée et désarme l'attente.
+   - **Répétition** : répéter *"Efface toutes les notes"* ne confirme JAMAIS la suppression.
+3. **Annulation immédiate (`CANCEL_CLEAR`)** :
+   - Formulations : *"Annuler"*, *"Ne supprime pas les notes"*, *"Je refuse de confirmer"*, *"Laisse tomber"*, ou simple appui sur le bouton physique/tactile `STOP`.
 
 ---
 
-## 3. Configuration des Modes de Parsing
+## 2. Formulations Expérimentales Reconnues (Sans Effet de Bord NVS)
 
-Le mode de parsing se configure centralement dans le fichier [`include/AppConfig.h`](file:///c:/Users/phall/Documents/Antigravity-5.1/VoiceJournal/VoiceJournal_CoreS3/include/AppConfig.h) :
+Ces intentions sont comprises par le moteur contextuel avec extraction de leurs paramètres (entités, dates, statuts), mais ne modifient pas la mémoire NVS (prévues pour les versions futures) :
 
-```cpp
-// Modes disponibles : ParserMode::LEGACY, ParserMode::INTELLIGENT, ParserMode::SHADOW
-inline constexpr ParserMode DEFAULT_PARSER_MODE = ParserMode::INTELLIGENT;
-```
-
-- **`ParserMode::INTELLIGENT` (Défaut) :** Exploite pleinement le moteur NLU C++17 avec gestion des concepts, des entités, du fuzzy matching et des négations.
-- **`ParserMode::LEGACY` :** Restaure le comportement strict de la version v0.1.1 (comparaison de sous-chaînes rigide).
-- **`ParserMode::SHADOW` :** Exécute l'action selon le moteur v0.1.1, tout en évaluant silencieusement le moteur v0.2.0 en parallèle et en enregistrant les divergences pour comparaison.
+| Formulation | Intention | Slots extraits |
+|---|---|---|
+| *"Je dois tester Gemini demain"* | `ADD_TASK` | `entity="Gemini"`, `date_relative="demain"` |
+| *"Il faut que je teste VoiceKit ce matin"* | `ADD_TASK` | `entity="VoiceKit"`, `date_relative="ce matin"` |
+| *"N'oublie pas de compiler le firmware"* | `ADD_TASK` | `action="compiler"`, `object="firmware"` |
+| *"Retrouve les bugs de VoiceKit"* | `SEARCH_NOTES` | `entity="VoiceKit"`, `type="PROBLEM"` |
+| *"Cherche les anomalies sur CoreS3"* | `SEARCH_NOTES` | `entity="CoreS3"`, `type="PROBLEM"` |
+| *"Cherche les notes de hier"* | `SEARCH_BY_DATE` | `date_relative="hier"` |
+| *"Trouve les observations de ce matin"* | `SEARCH_BY_DATE` | `date_relative="ce matin"` |
+| *"Fais le bilan du projet RuleBot"* | `ANALYZE_PROJECT` | `entity="RuleBot"`, `project="RuleBot"` |
+| *"Le problème de WiFi est corrigé"* | `RESOLVE_PROBLEM` | `type="RESOLVED"` |
+| *"Liste les tâches"* | `LIST_TASKS` | `type="TASK"` |
 
 ---
 
-## 4. Utilisation du Simulateur PC
+## 3. Formulations Rejetées (Protection et Garde-fous)
 
-Le simulateur autonome permet de tester, débugger et évaluer des transcriptions directement sur PC sans matériel.
+Pour empêcher tout comportement inattendu, les phrases suivantes sont formellement reconnues comme **invalides ou non destructives** :
 
-### 4.1 Compilation du Simulateur
-Dans le dossier `VoiceJournal_CoreS3` :
-```powershell
-g++ -std=c++17 -Wall -Wextra -Werror -Iinclude -Itests/mocks `
-    src/parser/TextNormalizer.cpp src/parser/Tokenizer.cpp src/parser/FuzzyMatcher.cpp `
-    src/parser/ConceptDictionary.cpp src/parser/NegationDetector.cpp src/parser/SlotExtractor.cpp `
-    src/parser/IntentMatcher.cpp src/parser/JournalParser.cpp src/CommandRouter.cpp `
-    simulator/main.cpp -o simulator/voicejournal_simulator.exe
-```
+| Formulation | Résultat | Raison |
+|---|---|---|
+| *"Efface le fichier de configuration"* | `UNKNOWN` | Cible `FILE` interdite d'effacement carnet |
+| *"Supprime le projet VoiceKit"* | `UNKNOWN` | Cible `PROJECT` interdite d'effacement carnet |
+| *"Efface la dernière note"* | `UNKNOWN` | Suppression unitaire non supportée (pas de global scope) |
+| *"Supprime le mot Gemini"* | `UNKNOWN` | Cible lexicale non destructive |
+| *"Effacer des fichiers est dangereux"* | `UNKNOWN` | Assertion générale, aucune commande |
+| *"Comment supprimer une note ?"* | `UNKNOWN` | Question informative (`QUESTION`), pas une action |
+| *"Je ne dois pas tester Gemini"* | `UNKNOWN` | Obligation niée (`obligation`), tâche annulée |
+| *"Lis efface"* | `AMBIGUOUS` | Conflit direct entre 2 verbes d'action contradictoires |
+| *"Compte les notes et efface tout"* | `AMBIGUOUS` | Conflit entre comptage et effacement |
 
-### 4.2 Lancement et Options CLI
-```powershell
-# 1. Lancement de la validation de base (17 tests)
-.\simulator\voicejournal_simulator.exe --test
+---
 
-# 2. Évaluation détaillée d'une phrase en mode INTELLIGENT
-.\simulator\voicejournal_simulator.exe --eval "Note, Gemini se déconnecte sur le CoreS3."
+## 4. Parsing Lab sur M5Stack CoreS3 (Section 19)
 
-# 3. Évaluation comparative en mode SHADOW
-.\simulator\voicejournal_simulator.exe --shadow "Retrouve les bugs de VoiceKit"
+VoiceJournal intègre sur son écran LCD 320 × 240 un laboratoire de diagnostic en direct accessible par le bouton tactile `[LAB]`.
 
-# 4. Mode interactif REPL
-.\simulator\voicejournal_simulator.exe
-```
+Le Parsing Lab propose **3 sous-pages** permutables par simple pression tactile sur le tiers supérieur de l'écran :
 
-### 4.3 Commandes du Mode Interactif REPL
-- `mode legacy` : Bascule le simulateur en mode historique.
-- `mode intelligent` : Bascule en mode intelligent v0.2.0.
-- `mode shadow` : Bascule en mode comparatif.
-- `arm_clear` : Simule l'armement d'une confirmation de suppression.
-- `cancel_clear` : Annule l'armement.
-- `test` : Exécute le banc de tests rapide.
-- `exit` ou `quit` : Quitte le simulateur.
-- *Toute autre saisie* : Évalue la phrase et affiche son arbre syntaxique complet.
+1. **Vue 1 — Résultat du parsing** :
+   - Transcription STT originale affichée.
+   - Intention retenue (`IntentId`), caractère exécutable (`EXEC: OUI / NON`).
+   - Score de confiance (`Raw` / `Ajusté` / `Pénalité fuzzy`).
+   - Règle de grammaire sélectionnée.
+2. **Vue 2 — Contexte sémantique (COR-01 à COR-06)** :
+   - Locution multi-mots reconnue (`Phrases`).
+   - Rôles sémantiques attribués (`Sujet`, `Action`, `Objet`, `Entité`, `Temps`).
+   - Portée des négations (`Portée: commande / payload / obligation / confirmation`).
+   - Catégorie d'objet cible (`Target: JOURNAL / NOTE / FILE / PROJECT...`).
+3. **Vue 3 — Comparaison SHADOW (COR-09)** :
+   - Statut comparatif miroir (`MATCH`, `NEW_INTENT`, `SECURITY_BLOCKED`, etc.).
+   - Décision du moteur historique v0.1.1 vs moteur intelligent v0.2.0.1.
+   - Temps d'analyse en microsecondes.
+
+> **Priorité absolue de `STOP`** : Le bouton `STOP` rouge physique et tactile reste actif et prioritaire dans tous les écrans du Parsing Lab.

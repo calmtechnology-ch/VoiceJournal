@@ -73,6 +73,10 @@ public:
         return (pos == std::string::npos) ? -1 : static_cast<int>(pos);
     }
 
+    bool startsWith(const char* prefix) const {
+        return indexOf(prefix) == 0;
+    }
+
     String& operator+=(const String& rhs) { data_ += rhs.data_; return *this; }
     String& operator+=(const char* rhs) { if (rhs) data_ += rhs; return *this; }
     String& operator+=(char c) { data_.push_back(c); return *this; }

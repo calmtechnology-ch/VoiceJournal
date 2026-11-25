@@ -30,7 +30,7 @@
     ],
     "CANCEL": [
       "annule", "annuler", "annulez", "annulation", "laisse", "tomber",
-      "abandonne", "abandonner", "abandonnez", "arrete", "arreter", "arretez", "non"
+      "abandonne", "abandonner", "abandonnez", "arrete", "arreter", "arretez", "non", "refuse", "refuser", "refusez"
     ],
     "HELP": [
       "aide", "aider", "secours", "commandes", "fonctionnement",
@@ -61,6 +61,25 @@
     ],
     "NEGATION": [
       "ne", "n", "pas", "plus", "jamais", "rien", "aucun", "aucune", "point", "guere"
+    ],
+    "OBLIGATION": [
+      "dois", "doit", "devons", "devez", "doivent", "devoir", "faut", "falloir",
+      "pense", "penser", "pensez", "oublie", "oublier"
+    ],
+    "FILE_TARGET": [
+      "fichier", "fichiers", "config", "configuration", "code", "document", "documents", "log", "logs"
+    ],
+    "DEVICE_TARGET": [
+      "cores3", "esp32", "micro", "haut-parleur", "ecran", "batterie", "materiel", "appareil"
+    ],
+    "ALL_QUANTIFIER": [
+      "tous", "toutes", "tout", "toute", "integralite", "ensemble", "totalite"
+    ],
+    "QUESTION": [
+      "quel", "quelle", "quels", "quelles", "comment", "pourquoi", "combien"
+    ],
+    "ACTION_VERB": [
+      "tester", "teste", "test", "valider", "valide", "deployer", "deploie", "compiler", "compile", "verifier", "verifie"
     ]
   }
 }

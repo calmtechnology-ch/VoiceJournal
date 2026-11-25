@@ -7,8 +7,8 @@ namespace AppConfig {
 
 // Identite applicative
 static constexpr const char* APP_NAME    = "VoiceJournal";
-static constexpr const char* APP_VERSION = "0.2.0";
-static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.0";
+static constexpr const char* APP_VERSION = "0.2.0.1";
+static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.0.1";
 
 // Stockage local NVS (tampon circulaire)
 static constexpr const char* NVS_NAMESPACE  = "vjournal";

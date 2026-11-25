@@ -14,6 +14,9 @@ set(PARSER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/Tokenizer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/FuzzyMatcher.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/ConceptDictionary.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/PhraseRecognizer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/SemanticRoleAnalyzer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/GrammarEvaluator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/NegationDetector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/SlotExtractor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/parser/IntentMatcher.cpp

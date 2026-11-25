@@ -232,7 +232,6 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
 }
 
 bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
-    // 1. Protection de sécurité absolue : refus strict en cas de présence de négation
     if (normalized.indexOf("ne ") >= 0 ||
         normalized.indexOf("n ") >= 0 ||
         normalized.indexOf("pas") >= 0 ||
@@ -243,7 +242,6 @@ bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
         return false;
     }
 
-    // 2. Formulations exactes explicitement autorisées
     if (normalized == "confirmer la suppression" ||
         normalized == "confirmer la suppression de toutes les notes" ||
         normalized == "confirmer la suppression des notes" ||
@@ -254,43 +252,24 @@ bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
         normalized == "oui confirmez la suppression" ||
         normalized == "oui confirme la suppression" ||
         normalized == "oui je confirme la suppression" ||
-        normalized == "confirmer" ||
-        normalized == "confirmez" ||
-        normalized == "confirme" ||
-        normalized == "je confirme" ||
         normalized == "oui je confirme" ||
         normalized == "oui confirmer" ||
         normalized == "oui confirmez" ||
         normalized == "oui confirme" ||
-        normalized == "valider la suppression" ||
-        normalized == "valide la suppression" ||
+        normalized == "oui efface" ||
+        normalized == "oui supprime" ||
         normalized == "supprimer definitivement" ||
         normalized == "effacer definitivement" ||
-        normalized == "oui supprime" ||
-        normalized == "oui efface") {
+        normalized == "valider la suppression" ||
+        normalized == "valide la suppression" ||
+        normalized == "je confirme" ||
+        normalized == "confirmer" ||
+        normalized == "confirmez" ||
+        normalized == "confirme") {
         return true;
     }
 
     return false;
-}
-
-bool CommandRouter::isCancelPhrase(const String& normalized) {
-    return normalized == "annuler" ||
-           normalized == "annulez" ||
-           normalized == "annule" ||
-           normalized == "annuler la suppression" ||
-           normalized == "annulez la suppression" ||
-           normalized == "annule la suppression" ||
-           normalized == "non" ||
-           normalized == "non annuler" ||
-           normalized == "stop" ||
-           normalized == "laisse tomber" ||
-           normalized == "ne supprime pas" ||
-           normalized == "ne supprime rien" ||
-           normalized == "n efface pas" ||
-           normalized == "n efface rien" ||
-           normalized == "ne rien faire" ||
-           normalized == "ne fais rien";
 }
 
 CommandResult CommandRouter::routeLegacy(const String& rawText, uint32_t nowMs) {
@@ -309,31 +288,38 @@ CommandResult CommandRouter::routeLegacy(const String& rawText, uint32_t nowMs) 
     }
 
     if (pendingClear) {
+        if (res.normalizedInput.indexOf("annuler") >= 0 ||
+            res.normalizedInput.indexOf("ne supprime pas") >= 0 ||
+            res.normalizedInput.indexOf("laisse tomber") >= 0 ||
+            res.normalizedInput.indexOf("non") >= 0 ||
+            res.normalizedInput.indexOf("pas") >= 0) {
+            clearPending_ = false;
+            clearArmedAtMs_ = 0;
+            res.type = CommandType::CANCEL_CLEAR;
+            return res;
+        }
+
         if (isExactConfirmPhrase(res.normalizedInput)) {
             clearPending_ = false;
             clearArmedAtMs_ = 0;
             res.type = CommandType::CONFIRM_CLEAR;
             return res;
         }
-        if (isCancelPhrase(res.normalizedInput)) {
-            clearPending_ = false;
-            clearArmedAtMs_ = 0;
-            res.type = CommandType::CANCEL_CLEAR;
-            return res;
-        }
-        // Toute autre phrase (ou négation) invalide la confirmation
+
         clearPending_ = false;
         clearArmedAtMs_ = 0;
+        res.type = CommandType::UNKNOWN;
+        return res;
     }
 
-    String notePayload;
-    if (extractNotePayload(rawText, notePayload)) {
-        if (notePayload.length() == 0) {
+    String payload;
+    if (extractNotePayload(rawText, payload)) {
+        if (payload.length() == 0) {
             res.type = CommandType::NONE;
             return res;
         }
         res.type = CommandType::ADD_NOTE;
-        res.payload = notePayload;
+        res.payload = payload;
         return res;
     }
 
@@ -390,13 +376,21 @@ CommandResult CommandRouter::routeLegacy(const String& rawText, uint32_t nowMs) 
         n == "supprimez les notes" ||
         n == "vide le carnet" ||
         n == "vider le carnet" ||
-        n == "videz le carnet") {
+        n == "videz le carnet" ||
+        n.startsWith("efface") ||
+        n.startsWith("supprime") ||
+        n.startsWith("vide")) {
         res.type = CommandType::REQUEST_CLEAR;
         return res;
     }
 
     if (n == "aide" || n == "aide moi" || n == "commandes") {
         res.type = CommandType::HELP;
+        return res;
+    }
+
+    if (n == "annule" || n == "annuler" || n == "laisse tomber" || n == "ne supprime pas les notes") {
+        res.type = CommandType::CANCEL_CLEAR;
         return res;
     }
 
@@ -415,16 +409,29 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
     const std::string textStd(rawText.c_str());
     res.parseResult = parser_.parse(textStd, pendingClear);
     res.normalizedInput = String(res.parseResult.normalizedText.c_str());
+    res.isExecutable = res.parseResult.executable;
 
     using namespace VoiceJournal::Parser;
 
+    // Validation centralisée des actions (COR-08)
+    // 1. Rejet strict si ambiguïté détectée
+    if (res.parseResult.ambiguous || res.parseResult.ambiguityDetected ||
+        res.parseResult.status == ParseStatus::AMBIGUOUS) {
+        if (pendingClear) {
+            cancelClearConfirmation();
+        }
+        res.type = CommandType::UNKNOWN;
+        return res;
+    }
+
+    // 2. Gestion selon le statut et l'intention
     switch (res.parseResult.intent) {
         case IntentId::ADD_NOTE:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
-            if (res.parseResult.observationPayload.empty()) {
+            if (res.parseResult.observationPayload.empty() ||
+                res.parseResult.status == ParseStatus::PAYLOAD_MISSING) {
                 res.type = CommandType::NONE;
             } else {
                 res.type = CommandType::ADD_NOTE;
@@ -434,53 +441,55 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
 
         case IntentId::READ_LAST_NOTE:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
             res.type = CommandType::READ_LAST_NOTE;
             break;
 
         case IntentId::COUNT_NOTES:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
             res.type = CommandType::COUNT_NOTES;
             break;
 
         case IntentId::ANALYZE_NOTES:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
             res.type = CommandType::ANALYZE_NOTES;
             break;
 
         case IntentId::REQUEST_CLEAR:
-            // Ne pas confirmer automatiquement si déjà en attente
-            res.type = CommandType::REQUEST_CLEAR;
+            if (pendingClear) {
+                // COR-08 : Aucune confirmation automatique par répétition de la demande
+                res.type = CommandType::REQUEST_CLEAR;
+            } else {
+                armClearConfirmation(nowMs);
+                res.type = CommandType::REQUEST_CLEAR;
+            }
             break;
 
         case IntentId::CONFIRM_CLEAR:
-            if (pendingClear && !res.parseResult.negationDetected) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+            if (pendingClear && !res.parseResult.negationDetected && !res.parseResult.fuzzyMatchUsed) {
+                cancelClearConfirmation();
                 res.type = CommandType::CONFIRM_CLEAR;
             } else {
+                if (pendingClear) {
+                    cancelClearConfirmation();
+                }
                 res.type = CommandType::UNKNOWN;
             }
             break;
 
         case IntentId::CANCEL_CLEAR:
-            clearPending_ = false;
-            clearArmedAtMs_ = 0;
+            cancelClearConfirmation();
             res.type = CommandType::CANCEL_CLEAR;
             break;
 
         case IntentId::HELP:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
             res.type = CommandType::HELP;
             break;
@@ -493,22 +502,24 @@ CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t no
         case IntentId::SEARCH_BY_DATE:
         case IntentId::ANALYZE_PROJECT:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                cancelClearConfirmation();
             }
             res.type = CommandType::EXPERIMENTAL;
             break;
 
         case IntentId::NO_ACTION:
+            if (pendingClear) {
+                cancelClearConfirmation();
+            }
             res.type = CommandType::NONE;
             break;
 
         case IntentId::UNKNOWN:
-        case IntentId::AMBIGUOUS:
         default:
             if (pendingClear) {
-                clearPending_ = false;
-                clearArmedAtMs_ = 0;
+                // COR-08 : Toute phrase invalide reçue pendant une confirmation doit annuler
+                // ou invalider proprement cette confirmation.
+                cancelClearConfirmation();
             }
             res.type = CommandType::UNKNOWN;
             break;
@@ -523,38 +534,58 @@ CommandResult CommandRouter::routeShadow(const String& rawText, uint32_t nowMs) 
 
     // 1. Analyse avec le moteur historique
     CommandResult legacyRes = routeLegacy(rawText, nowMs);
+    const bool legacyPendingAfter = clearPending_;
 
-    // 2. Restaurer l'état de confirmation pour une analyse équitable
+    // 2. Restaurer l'état de confirmation initial pour une analyse miroir équitable
     clearPending_ = savedClearPending;
     clearArmedAtMs_ = savedClearArmedAtMs;
 
-    // 3. Analyse avec le moteur intelligent
+    // 3. Analyse avec le moteur contextuel intelligent
     CommandResult intelRes = routeIntelligent(rawText, nowMs);
+    const bool intelPendingAfter = clearPending_;
+
+    // 4. L'état effectif de confirmation suit le moteur historique en mode SHADOW
+    clearPending_ = legacyPendingAfter;
+    clearArmedAtMs_ = savedClearArmedAtMs;
 
     CommandResult res = legacyRes;
     res.legacyType = legacyRes.type;
     res.parseResult = intelRes.parseResult;
+    res.isExecutable = intelRes.isExecutable;
 
-    // 4. Comparaison
-    if (legacyRes.type == intelRes.type) {
-        res.comparisonStatus = "MATCH";
-    } else if (legacyRes.type == CommandType::UNKNOWN && intelRes.type == CommandType::EXPERIMENTAL) {
-        res.comparisonStatus = "NEW_INTENT";
-    } else if (legacyRes.type == CommandType::UNKNOWN && intelRes.type != CommandType::UNKNOWN) {
-        res.comparisonStatus = "NEW_INTENT";
-    } else {
-        res.comparisonStatus = "DIVERGENCE";
-    }
-
-    // 5. Règle de sécurité non négociable : blocage de toute action destructive en cas de divergence
+    // 5. Comparateur SHADOW complet (COR-09)
     const bool legacyDestructive = (legacyRes.type == CommandType::CONFIRM_CLEAR || legacyRes.type == CommandType::REQUEST_CLEAR);
     const bool intelDestructive = (intelRes.type == CommandType::CONFIRM_CLEAR || intelRes.type == CommandType::REQUEST_CLEAR);
 
-    if (res.comparisonStatus == "DIVERGENCE" && (legacyDestructive || intelDestructive)) {
+    // Priorité absolue : Sécurité destructive (SECURITY_BLOCKED)
+    if ((legacyDestructive || intelDestructive) && legacyRes.type != intelRes.type) {
         res.type = CommandType::UNKNOWN;
         res.blockedByDivergence = true;
-        res.comparisonStatus = "SECURITY_BLOCKED";
+        res.shadowStatus = ShadowStatus::SECURITY_BLOCKED;
+        res.comparisonStatus = shadowStatusToString(ShadowStatus::SECURITY_BLOCKED);
         cancelClearConfirmation();
+        return res;
+    }
+
+    if (legacyRes.type == intelRes.type) {
+        // Même type : vérifier divergences de payload ou de paramètres
+        if (legacyRes.type == CommandType::ADD_NOTE && legacyRes.payload != intelRes.payload) {
+            res.shadowStatus = ShadowStatus::PAYLOAD_DIVERGENCE;
+            res.comparisonStatus = shadowStatusToString(ShadowStatus::PAYLOAD_DIVERGENCE);
+        } else {
+            res.shadowStatus = ShadowStatus::MATCH;
+            res.comparisonStatus = shadowStatusToString(ShadowStatus::MATCH);
+        }
+    } else if (legacyPendingAfter != intelPendingAfter) {
+        res.shadowStatus = ShadowStatus::STATE_DIVERGENCE;
+        res.comparisonStatus = shadowStatusToString(ShadowStatus::STATE_DIVERGENCE);
+    } else if (legacyRes.type == CommandType::UNKNOWN &&
+               (intelRes.type == CommandType::EXPERIMENTAL || intelRes.type != CommandType::UNKNOWN)) {
+        res.shadowStatus = ShadowStatus::NEW_INTENT;
+        res.comparisonStatus = shadowStatusToString(ShadowStatus::NEW_INTENT);
+    } else {
+        res.shadowStatus = ShadowStatus::ACTION_DIVERGENCE;
+        res.comparisonStatus = shadowStatusToString(ShadowStatus::ACTION_DIVERGENCE);
     }
 
     return res;
@@ -583,23 +614,15 @@ void CommandRouter::logDiagnostics(const CommandResult& res, bool maskPrivatePay
     Serial.printf("[VJ][PARSER] Tokens: %u\n", static_cast<unsigned int>(pr.tokens.size()));
     Serial.printf("[VJ][PARSER] Intent: %s\n", VoiceJournal::Parser::intentToString(pr.intent));
 
-    std::string conceptsStr;
-    if (pr.primaryConcepts.empty()) {
-        conceptsStr = "NONE";
-    } else {
-        for (size_t i = 0; i < pr.primaryConcepts.size(); ++i) {
-            if (i > 0) conceptsStr += ", ";
-            conceptsStr += VoiceJournal::Parser::conceptToString(pr.primaryConcepts[i]);
-        }
-    }
-    Serial.printf("[VJ][PARSER] Concepts: %s\n", conceptsStr.c_str());
+    const auto& fr = pr.semanticFrame;
+    Serial.printf("[VJ][PARSER] Frame: act=%s obj=%s tgt=%s ent=%s date=%s neg=%s\n",
+                  fr.action.c_str(), fr.object.c_str(),
+                  VoiceJournal::Parser::targetCategoryToString(fr.targetCategory),
+                  fr.entity.c_str(), fr.relativeDate.c_str(), fr.negationScope.c_str());
 
-    if (!pr.entities.empty()) {
-        Serial.printf("[VJ][PARSER] Entity: %s\n", pr.entities[0].canonical.c_str());
-    }
-
-    Serial.printf("[VJ][PARSER] Score: %u\n", static_cast<unsigned int>(pr.score));
-    Serial.printf("[VJ][PARSER] Negation: %s\n", pr.negationDetected ? "true" : "false");
+    Serial.printf("[VJ][PARSER] Score: %u (raw=%u)\n",
+                  static_cast<unsigned int>(pr.score), static_cast<unsigned int>(pr.rawScore));
+    Serial.printf("[VJ][PARSER] Ambiguous: %s\n", pr.ambiguityDetected ? "true" : "false");
     Serial.printf("[VJ][PARSER] Executable: %s\n", pr.executable ? "true" : "false");
 
     if (mode_ == ParserMode::SHADOW) {

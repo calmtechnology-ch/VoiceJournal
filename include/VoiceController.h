@@ -201,24 +201,36 @@ private:
 #endif
 
 /**
- * @brief Données détaillées pour la page de diagnostic Parsing Lab.
+ * @brief Données détaillées pour la page de diagnostic Parsing Lab (COR-08, Section 18).
  */
 struct ParsingLabData {
     VoiceJournal::Parser::IntentId intent = VoiceJournal::Parser::IntentId::UNKNOWN;
     VoiceJournal::Parser::ParseStatus status = VoiceJournal::Parser::ParseStatus::UNRECOGNIZED;
     uint8_t score = 0;
+    uint8_t rawScore = 0;
     bool negationDetected = false;
     bool fuzzyMatchUsed = false;
+    bool ambiguityDetected = false;
     bool executable = false;
     uint32_t durationUs = 0;
     String transcript;
     String primaryConcepts;
     String entity;
     String actionStatus;
-    // Données du mode SHADOW
+
+    // Contexte sémantique (Vue 2)
+    String action;
+    String object;
+    String targetCategory;
+    String relativeDate;
+    String negationScope;
+    String recognizedPhrase;
+
+    // Données du mode SHADOW et comparaison (Vue 3)
     String legacyIntentStr;
     String intelligentIntentStr;
     String comparisonStr;
+    String finalDecisionStr;
     bool isShadowMode = false;
     bool blockedByDivergence = false;
 };
@@ -236,6 +248,7 @@ struct JournalViewModel {
     bool connected = false;
     bool clearConfirmPending = false;
     bool labViewActive = false;
+    uint8_t labViewSubPage = 0; // 0 = Résultat, 1 = Contexte sémantique, 2 = Comparaison
     ParsingLabData labData;
 };
 
@@ -317,7 +330,9 @@ public:
      * @brief Bascule l'affichage entre l'ecran principal et le Parsing Lab.
      */
     void toggleLabView();
+    void cycleLabViewSubPage();
     bool isLabViewActive() const { return view_.labViewActive; }
+    uint8_t getLabViewSubPage() const { return view_.labViewSubPage; }
 
     /**
      * @brief Configure le mode de parsing actif (LEGACY, INTELLIGENT, SHADOW).

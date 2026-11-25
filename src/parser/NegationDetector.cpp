@@ -3,15 +3,31 @@
 
 namespace VoiceJournal::Parser {
 
-NegationAnalysis NegationDetector::analyze(const std::vector<Token>& tokens, bool startsWithAdd) {
+NegationAnalysis NegationDetector::analyze(
+    const std::vector<Token>& tokens,
+    bool startsWithAdd,
+    const std::vector<RecognizedPhrase>& phrases
+) {
     NegationAnalysis res;
     const size_t n = tokens.size();
     if (n == 0) return res;
 
+    // 1. Vérifier si une locution idiomatique positive est présente (ex: "ne pas oublier de", "n'oublie pas de")
+    for (const auto& p : phrases) {
+        if (p.isPositiveObligation) {
+            res.positiveObligation = true;
+            break;
+        }
+    }
+
+    // 2. Détection de tout marqueur négatif
     bool foundFirst = false;
     for (size_t i = 0; i < n; ++i) {
         if (ConceptDictionary::hasConcept(tokens[i].conceptMask, ConceptId::NEGATION) ||
-            tokens[i].text == "non") {
+            tokens[i].semanticRole == SemanticRole::NEGATION ||
+            tokens[i].text == "non" || tokens[i].text == "ne" || tokens[i].text == "n" ||
+            tokens[i].text == "pas" || tokens[i].text == "rien" || tokens[i].text == "jamais" ||
+            tokens[i].text == "aucun" || tokens[i].text == "aucune" || tokens[i].text == "plus") {
             res.hasAnyNegation = true;
             if (!foundFirst) {
                 res.firstNegationIndex = i;
@@ -24,7 +40,13 @@ NegationAnalysis NegationDetector::analyze(const std::vector<Token>& tokens, boo
         return res;
     }
 
-    // Règle fondamentale : si la phrase commence par une commande d'ajout ("Note, ...", "Mémorise, ...")
+    // Si une locution idiomatique positive est active, elle neutralise la négation globale
+    if (res.positiveObligation) {
+        res.commandNegated = false;
+        return res;
+    }
+
+    // 3. Règle fondamentale : si la phrase commence par une commande d'ajout ("Note, ...", "Mémorise, ...")
     // et possède un contenu subséquent, la négation est contenue dans le texte dicté et
     // NE DOIT PAS être considérée comme une négation de la commande d'enregistrement !
     if (startsWithAdd && n > 1) {
@@ -32,17 +54,23 @@ NegationAnalysis NegationDetector::analyze(const std::vector<Token>& tokens, boo
         return res;
     }
 
-    // Dans tous les autres cas (commandes de suppression, confirmation, lecture, etc.) :
-    // la présence d'une négation affecte la commande principale.
-    res.commandNegated = true;
+    // 4. Détection spécifique : obligation niée ("je ne dois pas", "il ne faut pas")
+    for (size_t i = 0; i < n; ++i) {
+        if (ConceptDictionary::hasConcept(tokens[i].conceptMask, ConceptId::NEGATION)) {
+            for (size_t j = 0; j < n; ++j) {
+                if (ConceptDictionary::hasConcept(tokens[j].conceptMask, ConceptId::OBLIGATION)) {
+                    res.obligationNegated = true;
+                }
+            }
+        }
+    }
 
-    // Détection spécifique : confirmation niée
+    // 5. Détection spécifique : confirmation niée
     // Ex: "je ne confirme pas la suppression", "ne confirme pas", "pas de confirmation", "non"
     for (size_t i = 0; i < n; ++i) {
         const bool isNeg = (ConceptDictionary::hasConcept(tokens[i].conceptMask, ConceptId::NEGATION) ||
                             tokens[i].text == "non");
         if (isNeg) {
-            // Examiner les tokens voisins pour détecter confirm / delete
             for (size_t j = 0; j < n; ++j) {
                 if (ConceptDictionary::hasConcept(tokens[j].conceptMask, ConceptId::CONFIRM)) {
                     res.confirmationNegated = true;
@@ -53,6 +81,10 @@ NegationAnalysis NegationDetector::analyze(const std::vector<Token>& tokens, boo
             }
         }
     }
+
+    // Dans tous les autres cas (commandes de suppression, lecture, etc.) :
+    // la présence d'une négation affecte la commande principale.
+    res.commandNegated = true;
 
     return res;
 }

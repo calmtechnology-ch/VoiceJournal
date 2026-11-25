@@ -12,6 +12,7 @@
 #include "MockKeyValueStore.h"
 #include "MockVoiceEngine.h"
 #include "parser/test_nlu_suite.h"
+#include "parser/test_contextual_suite.h"
 
 namespace {
 
@@ -1470,16 +1471,21 @@ int main() {
 
     std::printf("\nResultat v0.1.1 : %d PASS, %d FAIL\n", g_passed, g_failed);
 
-    std::printf("\n=== VoiceJournal v0.2.0 — Suite de tests NLU (200 cas de test) ===\n");
+    std::printf("\n=== VoiceJournal v0.2.0 — Suite de tests NLU (220 cas de test) ===\n");
     auto nluReport = VoiceJournal::Tests::runAllParserTests();
-    const int totalPassed = g_passed + static_cast<int>(nluReport.passed);
-    const int totalFailed = g_failed + static_cast<int>(nluReport.failed);
+
+    std::printf("\n=== VoiceJournal v0.2.0.1 — Suite de tests contextuels (240 cas de test) ===\n");
+    auto contextualReport = VoiceJournal::Tests::runAllContextualTests();
+
+    const int totalPassed = g_passed + static_cast<int>(nluReport.passed) + static_cast<int>(contextualReport.passed);
+    const int totalFailed = g_failed + static_cast<int>(nluReport.failed) + static_cast<int>(contextualReport.failed);
 
     std::printf("\n==================================================\n");
-    std::printf("Resultat Global VoiceJournal v0.2.0 :\n");
-    std::printf("  v0.1.1 Legacy : %d PASS, %d FAIL\n", g_passed, g_failed);
-    std::printf("  v0.2.0 NLU    : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
-    std::printf("  TOTAL         : %d PASS, %d FAIL\n", totalPassed, totalFailed);
+    std::printf("Resultat Global VoiceJournal v0.2.0.1 :\n");
+    std::printf("  v0.1.1 Legacy    : %d PASS, %d FAIL\n", g_passed, g_failed);
+    std::printf("  v0.2.0 NLU       : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
+    std::printf("  v0.2.0.1 Context : %zu PASS, %zu FAIL\n", contextualReport.passed, contextualReport.failed);
+    std::printf("  GRAND TOTAL      : %d PASS, %d FAIL\n", totalPassed, totalFailed);
     std::printf("==================================================\n");
 
     return (totalFailed == 0) ? 0 : 1;

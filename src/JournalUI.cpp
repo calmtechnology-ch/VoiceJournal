@@ -23,7 +23,9 @@ void JournalUI::updateView(const JournalViewModel& view) {
         view_.lastTranscript != view.lastTranscript ||
         view_.statusMessage != view.statusMessage ||
         view_.connected != view.connected ||
-        view_.clearConfirmPending != view.clearConfirmPending) {
+        view_.clearConfirmPending != view.clearConfirmPending ||
+        view_.labViewActive != view.labViewActive ||
+        view_.labViewSubPage != view.labViewSubPage) {
         view_ = view;
         needsRedraw_ = true;
     }
@@ -111,6 +113,9 @@ TouchAction JournalUI::processTouchSample(const TouchSample& sample, uint32_t no
         if (isInsideRect(sample.x, sample.y, BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H) ||
             isInsideRect(sample.x, sample.y, BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H)) {
             return TouchAction::TOGGLE_LAB;
+        }
+        if (isInsideRect(sample.x, sample.y, BTN_LAB_SUBPAGE_X, BTN_LAB_SUBPAGE_Y, BTN_LAB_SUBPAGE_W, BTN_LAB_SUBPAGE_H)) {
+            return TouchAction::CYCLE_LAB_SUBPAGE;
         }
     } else {
         if (isInsideRect(sample.x, sample.y, BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H)) {
@@ -417,7 +422,7 @@ void JournalUI::draw() {
         drawWrappedText(view_.statusMessage, CARD_X + 10, CARD_Y + CARD_H - 19, CARD_W - 20, 1, 12);
     } else {
         // =========================================================================
-        // Vue PARSING LAB
+        // Vue PARSING LAB (3 sous-vues, Section 18)
         // =========================================================================
         M5.Display.setTextDatum(top_left);
         M5.Display.setTextSize(1);
@@ -429,73 +434,119 @@ void JournalUI::draw() {
         uint16_t modeBg = (view_.parserMode == ParserMode::SHADOW)
                               ? M5.Display.color565(190, 120, 20)
                               : M5.Display.color565(40, 80, 150);
-        M5.Display.fillRoundRect(CARD_X + 90, CARD_Y + 6, 75, 18, 4, modeBg);
+        M5.Display.fillRoundRect(CARD_X + 85, CARD_Y + 6, 45, 18, 4, modeBg);
         M5.Display.setTextDatum(middle_center);
         M5.Display.setTextColor(TFT_WHITE, modeBg);
-        M5.Display.drawString(modeBadge, CARD_X + 90 + 37, CARD_Y + 15);
+        M5.Display.drawString(modeBadge, CARD_X + 85 + 22, CARD_Y + 15);
+
+        // Bouton [VUE 1/3], [VUE 2/3], [VUE 3/3]
+        const char* subViewLabels[3] = {"VUE 1/3", "VUE 2/3", "VUE 3/3"};
+        const char* currentSubView = subViewLabels[view_.labViewSubPage % 3];
+        M5.Display.fillRoundRect(BTN_LAB_SUBPAGE_X, BTN_LAB_SUBPAGE_Y, BTN_LAB_SUBPAGE_W, BTN_LAB_SUBPAGE_H, 4, M5.Display.color565(40, 110, 160));
+        M5.Display.drawRoundRect(BTN_LAB_SUBPAGE_X, BTN_LAB_SUBPAGE_Y, BTN_LAB_SUBPAGE_W, BTN_LAB_SUBPAGE_H, 4, TFT_WHITE);
+        M5.Display.setTextDatum(middle_center);
+        M5.Display.setTextColor(TFT_WHITE, M5.Display.color565(40, 110, 160));
+        M5.Display.drawString(currentSubView, BTN_LAB_SUBPAGE_X + (BTN_LAB_SUBPAGE_W / 2), BTN_LAB_SUBPAGE_Y + (BTN_LAB_SUBPAGE_H / 2));
 
         // Bouton [RETOUR]
         M5.Display.fillRoundRect(BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H, 4, M5.Display.color565(60, 75, 95));
         M5.Display.drawRoundRect(BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H, 4, TFT_WHITE);
         M5.Display.setTextDatum(middle_center);
+        M5.Display.setTextColor(TFT_WHITE, M5.Display.color565(60, 75, 95));
         M5.Display.drawString("RETOUR", BTN_LAB_RETOUR_X + (BTN_LAB_RETOUR_W / 2), BTN_LAB_RETOUR_Y + (BTN_LAB_RETOUR_H / 2));
 
-        M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 30, CARD_W - 16, cardBorder);
-
-        // Lignes de diagnostics
+        M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 32, CARD_W - 16, cardBorder);
         M5.Display.setTextDatum(top_left);
         M5.Display.setTextSize(1);
 
-        // Ligne 1 : Transcription
-        M5.Display.setTextColor(M5.Display.color565(170, 190, 215), cardBg);
-        String txt = (view_.labData.transcript.length() > 0) ? view_.labData.transcript : String("(Aucune transcription)");
-        drawWrappedText(String("Txt: ") + txt, CARD_X + 10, CARD_Y + 34, CARD_W - 20, 1, 12);
+        if (view_.labViewSubPage == 0) {
+            // Vue 1 — Résultat : Transcription, Intention, Statut, Action autorisée/refusée, Temps (µs)
+            M5.Display.setTextColor(M5.Display.color565(170, 190, 215), cardBg);
+            String txt = (view_.labData.transcript.length() > 0) ? view_.labData.transcript : String("(Aucune transcription)");
+            drawWrappedText(String("Txt: ") + txt, CARD_X + 10, CARD_Y + 36, CARD_W - 20, 1, 12);
 
-        // Ligne 2 : Intention + Score
-        M5.Display.setTextColor(M5.Display.color565(255, 220, 100), cardBg);
-        char bufIntent[64];
-        snprintf(bufIntent, sizeof(bufIntent), "Intent: %s (%u%%)",
-                 view_.labData.intelligentIntentStr.c_str(),
-                 static_cast<unsigned>(view_.labData.score));
-        M5.Display.drawString(bufIntent, CARD_X + 10, CARD_Y + 48);
+            M5.Display.setTextColor(M5.Display.color565(255, 220, 100), cardBg);
+            char bufIntent[64];
+            snprintf(bufIntent, sizeof(bufIntent), "Intent: %s (%u%%, raw=%u%%)",
+                     view_.labData.intelligentIntentStr.c_str(),
+                     static_cast<unsigned>(view_.labData.score),
+                     static_cast<unsigned>(view_.labData.rawScore));
+            M5.Display.drawString(bufIntent, CARD_X + 10, CARD_Y + 52);
 
-        // Ligne 3 : Concepts
-        M5.Display.setTextColor(M5.Display.color565(140, 225, 255), cardBg);
-        String cStr = view_.labData.primaryConcepts.length() > 0 ? view_.labData.primaryConcepts : String("NONE");
-        drawWrappedText(String("Concepts: ") + cStr, CARD_X + 10, CARD_Y + 62, CARD_W - 20, 1, 12);
+            M5.Display.setTextColor(M5.Display.color565(140, 225, 255), cardBg);
+            char bufStatus[64];
+            snprintf(bufStatus, sizeof(bufStatus), "Statut: %s | Exec: %s",
+                     VoiceJournal::Parser::parseStatusToString(view_.labData.status),
+                     view_.labData.executable ? "OUI" : "NON");
+            M5.Display.drawString(bufStatus, CARD_X + 10, CARD_Y + 68);
 
-        // Ligne 4 : Entités, Négation, Fuzzy
-        M5.Display.setTextColor(TFT_WHITE, cardBg);
-        char bufEnt[64];
-        snprintf(bufEnt, sizeof(bufEnt), "Ent: %s | Neg: %s | Fuz: %s",
-                 view_.labData.entity.length() > 0 ? view_.labData.entity.c_str() : "-",
-                 view_.labData.negationDetected ? "OUI" : "NON",
-                 view_.labData.fuzzyMatchUsed ? "OUI" : "NON");
-        M5.Display.drawString(bufEnt, CARD_X + 10, CARD_Y + 76);
+            uint16_t actColor = view_.labData.executable ? M5.Display.color565(100, 240, 140) : M5.Display.color565(255, 140, 100);
+            M5.Display.setTextColor(actColor, cardBg);
+            char bufTps[64];
+            snprintf(bufTps, sizeof(bufTps), "Act: %s | %u us",
+                     view_.labData.actionStatus.c_str(),
+                     static_cast<unsigned>(view_.labData.durationUs));
+            M5.Display.drawString(bufTps, CARD_X + 10, CARD_Y + 84);
 
-        // Ligne 5 : Temps et Action
-        uint16_t actColor = view_.labData.executable ? M5.Display.color565(100, 240, 140) : M5.Display.color565(255, 140, 100);
-        M5.Display.setTextColor(actColor, cardBg);
-        char bufTps[64];
-        snprintf(bufTps, sizeof(bufTps), "Tps: %u us | Act: %s",
-                 static_cast<unsigned>(view_.labData.durationUs),
-                 view_.labData.actionStatus.c_str());
-        M5.Display.drawString(bufTps, CARD_X + 10, CARD_Y + 90);
+            M5.Display.setTextColor(TFT_WHITE, cardBg);
+            char bufFlags[64];
+            snprintf(bufFlags, sizeof(bufFlags), "Neg: %s | Fuz: %s | Amb: %s",
+                     view_.labData.negationDetected ? "OUI" : "NON",
+                     view_.labData.fuzzyMatchUsed ? "OUI" : "NON",
+                     view_.labData.ambiguityDetected ? "OUI" : "NON");
+            M5.Display.drawString(bufFlags, CARD_X + 10, CARD_Y + 100);
+        } else if (view_.labViewSubPage == 1) {
+            // Vue 2 — Analyse contextuelle : Action, Objet, Entité, Date, Négation, Locution reconnue
+            M5.Display.setTextColor(M5.Display.color565(255, 200, 100), cardBg);
+            char bufActObj[64];
+            snprintf(bufActObj, sizeof(bufActObj), "Action: %s | Obj: %s",
+                     view_.labData.action.length() > 0 ? view_.labData.action.c_str() : "-",
+                     view_.labData.object.length() > 0 ? view_.labData.object.c_str() : "-");
+            M5.Display.drawString(bufActObj, CARD_X + 10, CARD_Y + 36);
 
-        // Lignes 6 & 7 (si mode SHADOW)
-        if (view_.labData.isShadowMode) {
-            M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 104, CARD_W - 16, cardBorder);
-            M5.Display.setTextColor(M5.Display.color565(255, 200, 120), cardBg);
-            char bufShadow1[64];
-            snprintf(bufShadow1, sizeof(bufShadow1), "LEG: %s | INT: %s",
-                     view_.labData.legacyIntentStr.c_str(),
-                     view_.labData.intelligentIntentStr.c_str());
-            M5.Display.drawString(bufShadow1, CARD_X + 10, CARD_Y + 108);
+            M5.Display.setTextColor(M5.Display.color565(130, 220, 255), cardBg);
+            char bufTgtEnt[64];
+            snprintf(bufTgtEnt, sizeof(bufTgtEnt), "Cible: %s | Ent: %s",
+                     view_.labData.targetCategory.c_str(),
+                     view_.labData.entity.length() > 0 ? view_.labData.entity.c_str() : "-");
+            M5.Display.drawString(bufTgtEnt, CARD_X + 10, CARD_Y + 54);
 
-            char bufShadow2[64];
-            snprintf(bufShadow2, sizeof(bufShadow2), "COMP: %s",
-                     view_.labData.comparisonStr.c_str());
-            M5.Display.drawString(bufShadow2, CARD_X + 10, CARD_Y + 122);
+            M5.Display.setTextColor(TFT_WHITE, cardBg);
+            char bufDateNeg[64];
+            snprintf(bufDateNeg, sizeof(bufDateNeg), "Date: %s | NegScope: %s",
+                     view_.labData.relativeDate.length() > 0 ? view_.labData.relativeDate.c_str() : "-",
+                     view_.labData.negationScope.c_str());
+            M5.Display.drawString(bufDateNeg, CARD_X + 10, CARD_Y + 72);
+
+            M5.Display.setTextColor(M5.Display.color565(210, 170, 255), cardBg);
+            char bufPhrase[64];
+            snprintf(bufPhrase, sizeof(bufPhrase), "Locution: %s",
+                     view_.labData.recognizedPhrase.length() > 0 ? view_.labData.recognizedPhrase.c_str() : "(Aucune)");
+            M5.Display.drawString(bufPhrase, CARD_X + 10, CARD_Y + 90);
+        } else {
+            // Vue 3 — Comparaison : Résultat LEGACY, Résultat INTELLIGENT, Différences, Décision finale
+            M5.Display.setTextColor(M5.Display.color565(200, 200, 200), cardBg);
+            char bufLeg[64];
+            snprintf(bufLeg, sizeof(bufLeg), "LEGACY: %s", view_.labData.legacyIntentStr.c_str());
+            M5.Display.drawString(bufLeg, CARD_X + 10, CARD_Y + 36);
+
+            M5.Display.setTextColor(M5.Display.color565(255, 220, 100), cardBg);
+            char bufInt[64];
+            snprintf(bufInt, sizeof(bufInt), "INTELLIGENT: %s", view_.labData.intelligentIntentStr.c_str());
+            M5.Display.drawString(bufInt, CARD_X + 10, CARD_Y + 54);
+
+            uint16_t compColor = (view_.labData.comparisonStr == "MATCH") ? M5.Display.color565(100, 240, 140)
+                               : (view_.labData.comparisonStr == "SECURITY_BLOCKED") ? M5.Display.color565(255, 80, 80)
+                               : M5.Display.color565(255, 180, 80);
+            M5.Display.setTextColor(compColor, cardBg);
+            char bufComp[64];
+            snprintf(bufComp, sizeof(bufComp), "Statut: %s", view_.labData.comparisonStr.c_str());
+            M5.Display.drawString(bufComp, CARD_X + 10, CARD_Y + 72);
+
+            M5.Display.setTextColor(TFT_WHITE, cardBg);
+            char bufDec[64];
+            snprintf(bufDec, sizeof(bufDec), "Decision: %s", view_.labData.finalDecisionStr.c_str());
+            M5.Display.drawString(bufDec, CARD_X + 10, CARD_Y + 90);
         }
     }
 
