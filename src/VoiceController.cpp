@@ -706,14 +706,19 @@ void VoiceController::processFinalTranscription(const String& text, uint32_t now
     view_.labData.negationScope = String(cmd.parseResult.semanticFrame.negationScope.c_str());
     view_.labData.recognizedPhrase = String(cmd.parseResult.semanticFrame.matchedPhrase.c_str());
 
-    if (cmd.blockedByDivergence) {
-        view_.labData.actionStatus = "BLOQUEE (DIVERGENCE)";
+    if (cmd.blockedByDivergence || cmd.shadowStatus == ShadowStatus::SECURITY_BLOCKED) {
+        view_.labData.actionStatus = "REFUS DE SECURITE";
+    } else if (cmd.parseResult.ambiguous || cmd.parseResult.ambiguityDetected ||
+               cmd.parseResult.status == VoiceJournal::Parser::ParseStatus::AMBIGUOUS) {
+        view_.labData.actionStatus = "COMMANDE AMBIGUE";
     } else if (cmd.type == CommandType::EXPERIMENTAL) {
-        view_.labData.actionStatus = "REFUSEE (NON DISPONIBLE)";
+        view_.labData.actionStatus = "FONCTION INDISPONIBLE";
     } else if (cmd.type == CommandType::UNKNOWN) {
-        view_.labData.actionStatus = "NON RECONNUE";
-    } else {
+        view_.labData.actionStatus = "COMMANDE INCONNUE";
+    } else if (cmd.isExecutable) {
         view_.labData.actionStatus = "AUTORISEE";
+    } else {
+        view_.labData.actionStatus = "REFUS DE SECURITE";
     }
 
     if (!cmd.parseResult.entities.empty()) {
@@ -886,7 +891,7 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
         case CommandType::EXPERIMENTAL: {
             setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
             setStatusMessage("Demande comprise mais non disponible.");
-            enqueueSpeech("La demande est comprise, mais cette fonction n'est pas encore disponible.");
+            enqueueSpeech("Cette fonction sera disponible dans une prochaine version.");
             break;
         }
 

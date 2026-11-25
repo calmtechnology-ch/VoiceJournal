@@ -185,12 +185,26 @@ ParseResult IntentMatcher::match(
         confirmationPending
     );
 
-    // 5. Filtrage sémantique strict des objets et actions (COR-05)
+    // 5. Filtrage sémantique strict des objets et actions (COR-05, COR-13)
     // Sécurité destructive : REQUEST_CLEAR exige JOURNAL / JOURNAL_NOTE avec portée globale
-    // et exclut formellement les fichiers, projets, périphériques, suppressions unitaires
+    // et exclut formellement : rapprochement fuzzy, cibles concurrentes, fichiers, projets, périphériques, suppressions unitaires
     auto it = candidates.begin();
     while (it != candidates.end()) {
         if (it->intent == IntentId::REQUEST_CLEAR) {
+            // Section 7.5 : Aucun rapprochement approximatif sur les éléments déterminants de la commande destructive
+            if (anyFuzzyUsed) {
+                it = candidates.erase(it);
+                continue;
+            }
+            // Section 7 : Rejet si objets concurrents ou cibles non-carnet détectées
+            if (result.hasConcept(ConceptId::FILE_TARGET) ||
+                result.hasConcept(ConceptId::DEVICE_TARGET) ||
+                result.hasConcept(ConceptId::PROJECT) ||
+                result.hasConcept(ConceptId::TASK) ||
+                result.hasConcept(ConceptId::PROBLEM)) {
+                it = candidates.erase(it);
+                continue;
+            }
             if (frame.targetCategory == TargetCategory::FILE ||
                 frame.targetCategory == TargetCategory::PROJECT ||
                 frame.targetCategory == TargetCategory::DEVICE ||
@@ -249,11 +263,12 @@ ParseResult IntentMatcher::match(
     }
 
     // 8. Évaluation de l'ambiguïté indépendamment de la pénalité fuzzy (COR-07)
-    // Corrige le défaut de la v0.2.0 : une pénalité fuzzy ne doit pas masquer une ambiguïté
+    // Conflit entre deux intentions distinctes de priorité et score comparables
     if (candidates.size() >= 2) {
         if (candidates[0].intent != candidates[1].intent) {
+            const int priorityDiff = std::abs(static_cast<int>(candidates[0].priority) - static_cast<int>(candidates[1].priority));
             const int diff = std::abs(static_cast<int>(candidates[0].score) - static_cast<int>(candidates[1].score));
-            if (diff <= 5 && candidates[0].score >= 80) {
+            if (priorityDiff <= 5 && diff <= 5 && candidates[0].score >= 80) {
                 result.intent = IntentId::AMBIGUOUS;
                 result.status = ParseStatus::AMBIGUOUS;
                 result.ambiguityDetected = true;

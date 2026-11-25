@@ -13,6 +13,7 @@
 #include "MockVoiceEngine.h"
 #include "parser/test_nlu_suite.h"
 #include "parser/test_contextual_suite.h"
+#include "parser/test_consolidation_v021_suite.h"
 
 namespace {
 
@@ -1168,7 +1169,7 @@ void test_ui_provider_switch_touch_rules_and_debounce() {
     }
 }
 
-void test_controller_default_gemini_and_switch_with_openai() {
+void test_controller_default_openai_and_switch_with_gemini() {
     setMockMillis(30000);
     MockKeyValueStore store;
     JournalStorage storage(&store);
@@ -1177,37 +1178,36 @@ void test_controller_default_gemini_and_switch_with_openai() {
 
     CommandRouter router;
     MockVoiceEngine engine;
-    engine.provider = AiProvider::GEMINI;
+    engine.provider = AiProvider::OPENAI;
     VoiceController ctrl(engine, storage, router);
     ctrl.attachCallbacks();
 
-    // Par defaut : Gemini avec models/gemini-3.8-live
-    EXPECT_EQ(AppConfig::DEFAULT_AI_PROVIDER, AiProvider::GEMINI);
-    EXPECT_EQ(std::strcmp(AppConfig::GEMINI_MODEL_NAME, "models/gemini-3.8-live"), 0);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
-    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::GEMINI);
+    // Par defaut : OpenAI Realtime (conforme Section 3 v0.2.1)
+    EXPECT_EQ(AppConfig::DEFAULT_AI_PROVIDER, AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getViewModel().provider, AiProvider::OPENAI);
 
     engine.simulateReady();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
 
-    // Bascule Gemini -> OpenAI
+    // Bascule OpenAI -> Gemini
     EXPECT_TRUE(ctrl.onSwitchProviderRequested(30100));
     EXPECT_EQ(engine.setProviderCalls, 1);
-    EXPECT_EQ(engine.provider, AiProvider::OPENAI);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(engine.provider, AiProvider::GEMINI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
     EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
     EXPECT_EQ(storage.count(), static_cast<size_t>(1)); // NVS intact
 
     engine.simulateReady();
     EXPECT_EQ(ctrl.getState(), JournalState::READY);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
 
-    // Simuler une erreur / deconnexion OpenAI puis retour vers Gemini
+    // Simuler une erreur / deconnexion Gemini puis retour vers OpenAI
     engine.simulateDisconnect();
     EXPECT_EQ(ctrl.getState(), JournalState::DISCONNECTED);
     EXPECT_TRUE(ctrl.onSwitchProviderRequested(30500));
-    EXPECT_EQ(engine.provider, AiProvider::GEMINI);
-    EXPECT_EQ(ctrl.getProvider(), AiProvider::GEMINI);
+    EXPECT_EQ(engine.provider, AiProvider::OPENAI);
+    EXPECT_EQ(ctrl.getProvider(), AiProvider::OPENAI);
     EXPECT_EQ(ctrl.getState(), JournalState::CONNECTING);
 
     engine.simulateReady();
@@ -1462,7 +1462,7 @@ int main() {
 
     // 5. Multi-fournisseurs OpenAI (defaut) / Gemini
     runTest("JournalUI: selecteur fournisseur IA (hit-test, anti-rebond, etats)", test_ui_provider_switch_touch_rules_and_debounce);
-    runTest("VoiceController: Gemini par defaut (models/gemini-3.8-live) + bascule Gemini <-> OpenAI + reprise apres deconnexion", test_controller_default_gemini_and_switch_with_openai);
+    runTest("VoiceController: OpenAI par defaut + bascule OpenAI <-> Gemini + reprise apres deconnexion", test_controller_default_openai_and_switch_with_gemini);
     runTest("VoiceController: refus bascule si cle manquante ou moteur occupe", test_controller_provider_switch_rejected_when_missing_key_or_busy);
     runTest("VoiceController: Gemini initial, profils vocaux et capture apres bascule", test_controller_initial_gemini_and_voice_profiles);
     runTest("VoiceController: cle initiale manquante (ERROR_STATE) puis reprise par bascule", test_controller_missing_initial_key_error_and_switch_recovery);
@@ -1474,18 +1474,22 @@ int main() {
     std::printf("\n=== VoiceJournal v0.2.0 — Suite de tests NLU (220 cas de test) ===\n");
     auto nluReport = VoiceJournal::Tests::runAllParserTests();
 
-    std::printf("\n=== VoiceJournal v0.2.0.1 — Suite de tests contextuels (240 cas de test) ===\n");
+    std::printf("\n=== VoiceJournal v0.2.0.1 — Suite de tests contextuels (249 cas de test) ===\n");
     auto contextualReport = VoiceJournal::Tests::runAllContextualTests();
 
-    const int totalPassed = g_passed + static_cast<int>(nluReport.passed) + static_cast<int>(contextualReport.passed);
-    const int totalFailed = g_failed + static_cast<int>(nluReport.failed) + static_cast<int>(contextualReport.failed);
+    std::printf("\n=== VoiceJournal v0.2.1 — Suite de consolidation (COR-11 a COR-15) ===\n");
+    auto consolidationReport = VoiceJournal::Tests::runAllConsolidationTests();
+
+    const int totalPassed = g_passed + static_cast<int>(nluReport.passed) + static_cast<int>(contextualReport.passed) + static_cast<int>(consolidationReport.passed);
+    const int totalFailed = g_failed + static_cast<int>(nluReport.failed) + static_cast<int>(contextualReport.failed) + static_cast<int>(consolidationReport.failed);
 
     std::printf("\n==================================================\n");
-    std::printf("Resultat Global VoiceJournal v0.2.0.1 :\n");
-    std::printf("  v0.1.1 Legacy    : %d PASS, %d FAIL\n", g_passed, g_failed);
-    std::printf("  v0.2.0 NLU       : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
-    std::printf("  v0.2.0.1 Context : %zu PASS, %zu FAIL\n", contextualReport.passed, contextualReport.failed);
-    std::printf("  GRAND TOTAL      : %d PASS, %d FAIL\n", totalPassed, totalFailed);
+    std::printf("Resultat Global VoiceJournal v0.2.1 Consolidation :\n");
+    std::printf("  v0.1.1 Legacy        : %d PASS, %d FAIL\n", g_passed, g_failed);
+    std::printf("  v0.2.0 NLU           : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
+    std::printf("  v0.2.0.1 Context     : %zu PASS, %zu FAIL\n", contextualReport.passed, contextualReport.failed);
+    std::printf("  v0.2.1 Consolidation : %zu PASS, %zu FAIL\n", consolidationReport.passed, consolidationReport.failed);
+    std::printf("  GRAND TOTAL          : %d PASS, %d FAIL\n", totalPassed, totalFailed);
     std::printf("==================================================\n");
 
     return (totalFailed == 0) ? 0 : 1;

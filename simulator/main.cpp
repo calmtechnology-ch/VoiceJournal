@@ -303,7 +303,7 @@ int main(int argc, char *argv[]) {
 
   std::cout << "==============================================================="
                "=================\n";
-  std::cout << "  VoiceJournal v0.2.0.1 — Simulateur Console NLU & Contextual "
+  std::cout << "  VoiceJournal v0.2.1 — Simulateur Console NLU & Contextual "
                "Parsing\n";
   std::cout << "==============================================================="
                "=================\n";

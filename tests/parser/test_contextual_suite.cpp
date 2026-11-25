@@ -6,6 +6,7 @@
 #include "parser/Tokenizer.h"
 #include "parser/ConceptDictionary.h"
 #include "CommandRouter.h"
+#include "SerialParserProtocol.h"
 
 #include <iostream>
 #include <string>
@@ -603,13 +604,113 @@ void testCategory21_SerialProtocol() {
     expectTrue(PHRASE_COUNT >= 40, "Phrases count at least 40");
 }
 
+// -----------------------------------------------------------------------------
+// Catégorie 22 : Consolidation v0.2.1 (COR-11 à COR-15)
+// -----------------------------------------------------------------------------
+void testCategory22_Consolidation_COR11_to_COR15() {
+    JournalParser parser;
+    CommandRouter router(30000, ParserMode::INTELLIGENT);
+
+    // --- COR-11 : Validation centralisée des actions ---
+    // 1. Statut invalide -> aucune action métier autorisée
+    std::string tooLongInput(1050, 'a');
+    auto rInv = router.route(String(tooLongInput.c_str()), 1000);
+    expectTrue(!rInv.isExecutable, "COR-11: Invalid status not executable");
+    expectTrue(rInv.type == CommandType::NONE || rInv.type == CommandType::UNKNOWN, "COR-11: Invalid status type NONE/UNKNOWN");
+
+    // 2. Intention expérimentale reconnue mais non exécutable
+    auto rExp = router.route("Je dois tester Gemini demain", 1000);
+    expectTrue(rExp.type == CommandType::EXPERIMENTAL, "COR-11: Experimental intent mapped to EXPERIMENTAL");
+    expectTrue(!rExp.isExecutable, "COR-11: Experimental intent executable=false");
+
+    // 3. Annulation de sécurité toujours possible pendant attente
+    router.armClearConfirmation(2000);
+    auto rCanc = router.route("Annuler", 2500);
+    expectTrue(rCanc.type == CommandType::CANCEL_CLEAR, "COR-11: Safety cancellation CANCEL_CLEAR");
+    expectTrue(rCanc.isExecutable, "COR-11: Safety cancellation executable");
+    expectTrue(!router.isClearConfirmationPending(2600), "COR-11: Confirmation disarmed after cancel");
+
+    // 4. Répétition de demande ne confirme jamais automatiquement
+    router.armClearConfirmation(3000);
+    auto rRep = router.route("Efface toutes les notes", 3500);
+    expectTrue(rRep.type == CommandType::REQUEST_CLEAR, "COR-11: Repeated request does not auto-confirm");
+    expectTrue(router.isClearConfirmationPending(3600), "COR-11: Remains pending awaiting exact confirmation");
+    router.cancelClearConfirmation();
+
+    // --- COR-12 : Rejet strict des entrées invalides ---
+    // 5. Entrée > 1024 octets rejetée intégralement sans analyse partielle
+    auto pLong = parser.parse(tooLongInput, false);
+    expectTrue(pLong.status == ParseStatus::INPUT_TOO_LONG, "COR-12: >1024 octets INPUT_TOO_LONG");
+    expectTrue(pLong.intent == IntentId::UNKNOWN, "COR-12: >1024 octets intent UNKNOWN");
+    expectTrue(!pLong.executable, "COR-12: >1024 octets executable=false");
+
+    // 6. Entrée > 96 tokens rejetée intégralement sans analyse partielle
+    std::string tokenOverflow = "";
+    for (int i = 0; i < 100; ++i) {
+        tokenOverflow += "mot ";
+    }
+    auto pTok = parser.parse(tokenOverflow, false);
+    expectTrue(pTok.status == ParseStatus::TOO_MANY_TOKENS, "COR-12: >96 tokens TOO_MANY_TOKENS");
+    expectTrue(pTok.intent == IntentId::UNKNOWN, "COR-12: >96 tokens intent UNKNOWN");
+    expectTrue(!pTok.executable, "COR-12: >96 tokens executable=false");
+
+    // 7. Entrée UTF-8 invalide rejetée
+    std::string invalidUtf = "Note \xFF\xFE invalide";
+    auto pUtf = parser.parse(invalidUtf, false);
+    expectTrue(pUtf.status == ParseStatus::INVALID_UTF8, "COR-12: Invalid UTF-8 status");
+    expectTrue(!pUtf.executable, "COR-12: Invalid UTF-8 executable=false");
+
+    // 8. Dépassement pendant confirmation désarme la confirmation
+    router.armClearConfirmation(4000);
+    auto rOver = router.route(String(tooLongInput.c_str()), 4500);
+    expectTrue(!router.isClearConfirmationPending(4600), "COR-12: Overflow disarms confirmation");
+
+    // --- COR-13 : Renforcement de la grammaire (12 exemples obligatoires) ---
+    expectTrue(parser.parse("Combien de notes ?").intent == IntentId::COUNT_NOTES, "COR-13: Combien de notes ?");
+    expectTrue(parser.parse("Combien coute un CoreS3 ?").intent == IntentId::UNKNOWN, "COR-13: Combien coute un CoreS3 ?");
+    expectTrue(parser.parse("Lis la derniere note").intent == IntentId::READ_LAST_NOTE, "COR-13: Lis la derniere note");
+    expectTrue(parser.parse("Lis le fichier de configuration").intent == IntentId::UNKNOWN, "COR-13: Lis le fichier de configuration");
+    expectTrue(parser.parse("Fais le bilan").intent == IntentId::ANALYZE_NOTES, "COR-13: Fais le bilan");
+    expectTrue(parser.parse("Fais le bilan du projet VoiceKit").intent == IntentId::ANALYZE_PROJECT, "COR-13: Fais le bilan du projet VoiceKit");
+    expectTrue(parser.parse("Supprime le fichier de configuration").intent == IntentId::UNKNOWN, "COR-13: Supprime le fichier config");
+    expectTrue(parser.parse("Efface la derniere note").intent == IntentId::UNKNOWN, "COR-13: Efface la derniere note refus global");
+    expectTrue(parser.parse("Efface toutes les notes").intent == IntentId::REQUEST_CLEAR, "COR-13: Efface toutes les notes");
+    expectTrue(parser.parse("Je dois tester Gemini demain").intent == IntentId::ADD_TASK, "COR-13: Je dois tester Gemini demain");
+    expectTrue(parser.parse("Je ne dois pas tester Gemini").intent == IntentId::UNKNOWN, "COR-13: Je ne dois pas tester Gemini");
+    expectTrue(parser.parse("N'oublie pas de tester Gemini").intent == IntentId::ADD_TASK, "COR-13: N'oublie pas de tester Gemini");
+
+    // --- COR-14 : Protocole série USB avec réponses JSON valides ---
+    auto prParse = parser.parse("Je dois tester Gemini demain", false);
+    std::string jsonParse = VoiceJournal::Protocol::formatParseJson(prParse);
+    expectTrue(jsonParse.find("\"command\": \"PARSE\"") != std::string::npos, "COR-14: JSON PARSE command");
+    expectTrue(jsonParse.find("\"intent\": \"ADD_TASK\"") != std::string::npos, "COR-14: JSON PARSE intent");
+    expectTrue(jsonParse.find("\"status\": \"OK\"") != std::string::npos, "COR-14: JSON PARSE status");
+    expectTrue(jsonParse.find("\"executable\": false") != std::string::npos, "COR-14: JSON PARSE executable");
+
+    std::string jsonStatus = VoiceJournal::Protocol::formatParserStatusJson("0.2.1", "INTELLIGENT", 100000, 50000, 4000000, 19, 51);
+    expectTrue(jsonStatus.find("\"command\": \"PARSER_STATUS\"") != std::string::npos, "COR-14: JSON PARSER_STATUS command");
+    expectTrue(jsonStatus.find("\"version\": \"0.2.1\"") != std::string::npos, "COR-14: JSON PARSER_STATUS version");
+
+    std::string jsonHelp = VoiceJournal::Protocol::formatParserHelpJson();
+    expectTrue(jsonHelp.find("\"command\": \"PARSER_HELP\"") != std::string::npos, "COR-14: JSON PARSER_HELP command");
+
+    // --- COR-15 : Consolidation du mode SHADOW ---
+    CommandRouter shadowRouter(30000, ParserMode::SHADOW);
+    auto shMatch = shadowRouter.routeShadow("Lis la derniere note", 5000);
+    expectTrue(shMatch.shadowStatus == ShadowStatus::MATCH, "COR-15: SHADOW MATCH on matching read");
+
+    auto shBlock = shadowRouter.routeShadow("Efface le fichier de configuration", 5000);
+    expectTrue(shBlock.shadowStatus == ShadowStatus::SECURITY_BLOCKED, "COR-15: SHADOW SECURITY_BLOCKED on divergence");
+    expectTrue(!shadowRouter.isClearConfirmationPending(5001), "COR-15: Divergence disarms clear");
+}
+
 } // namespace
 
 TestReport runAllContextualTests() {
     g_catPassed = 0;
     g_catTotal = 0;
 
-    std::cout << "\n=== EXECUTION DE LA SUITE DE TESTS CONTEXTUELS (v0.2.0.1) ===\n";
+    std::cout << "\n=== EXECUTION DE LA SUITE DE TESTS CONTEXTUELS (v0.2.1) ===\n";
 
     const int b12 = g_catPassed;
     testCategory12_Phrases();
@@ -650,6 +751,10 @@ TestReport runAllContextualTests() {
     const int b21 = g_catPassed;
     testCategory21_SerialProtocol();
     std::cout << "[PASS] Catégorie 21 : Protocole série USB (" << (g_catPassed - b21) << " tests)\n";
+
+    const int b22 = g_catPassed;
+    testCategory22_Consolidation_COR11_to_COR15();
+    std::cout << "[PASS] Catégorie 22 : Consolidation v0.2.1 COR-11 à COR-15 (" << (g_catPassed - b22) << " tests)\n";
 
     TestReport report;
     report.total = g_catTotal;

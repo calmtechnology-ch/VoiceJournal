@@ -56,6 +56,8 @@
       "baseScore": 90,
       "executable": true,
       "requiredConcepts": ["COUNT"],
+      "allowedTargets": ["JOURNAL", "JOURNAL_NOTE"],
+      "forbiddenTargets": ["FILE", "PROJECT", "DEVICE"],
       "rejectNegatedCommand": true
     },
     {
@@ -65,6 +67,8 @@
       "baseScore": 90,
       "executable": true,
       "requiredConcepts": ["READ"],
+      "allowedTargets": ["JOURNAL", "JOURNAL_NOTE"],
+      "forbiddenTargets": ["FILE", "PROJECT", "DEVICE"],
       "rejectNegatedCommand": true
     },
     {
@@ -131,7 +135,7 @@
       "id": "search_notes_query",
       "intent": "SEARCH_NOTES",
       "priority": 75,
-      "baseScore": 85,
+      "baseScore": 90,
       "executable": false,
       "requiredConcepts": ["SEARCH"],
       "optionalConcepts": ["NOTE_TARGET", "PROBLEM", "ENTITY"],

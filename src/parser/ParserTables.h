@@ -623,14 +623,14 @@ inline constexpr GrammarRule GRAMMAR_RULES[GRAMMAR_RULE_COUNT] = {
     {
         "count_notes_query", IntentId::COUNT_NOTES, 80, 90, true,
         0x8u, 0x0u, 0x0u,
-        0x0u, 0x0u,
+        0x6u, 0xd0u,
         ConceptId::NONE, false, false, false,
         true, false, false, false, false, false
     },
     {
         "read_last_note_cmd", IntentId::READ_LAST_NOTE, 80, 90, true,
         0x4u, 0x0u, 0x0u,
-        0x0u, 0x0u,
+        0x6u, 0xd0u,
         ConceptId::NONE, false, false, false,
         true, false, false, false, false, false
     },
@@ -677,7 +677,7 @@ inline constexpr GrammarRule GRAMMAR_RULES[GRAMMAR_RULE_COUNT] = {
         true, false, false, false, false, false
     },
     {
-        "search_notes_query", IntentId::SEARCH_NOTES, 75, 85, false,
+        "search_notes_query", IntentId::SEARCH_NOTES, 75, 90, false,
         0x2u, 0x4200u, 0xa0u,
         0x0u, 0x0u,
         ConceptId::NONE, false, false, false,

@@ -7,8 +7,8 @@ namespace AppConfig {
 
 // Identite applicative
 static constexpr const char* APP_NAME    = "VoiceJournal";
-static constexpr const char* APP_VERSION = "0.2.0.1";
-static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.0.1";
+static constexpr const char* APP_VERSION = "0.2.1";
+static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.1";
 
 // Stockage local NVS (tampon circulaire)
 static constexpr const char* NVS_NAMESPACE  = "vjournal";
@@ -125,10 +125,10 @@ inline const char* parserModeToLabel(ParserMode mode) {
 }
 
 namespace AppConfig {
-// Fournisseur IA utilise au demarrage
+// Fournisseur IA utilise au demarrage (OpenAI Realtime par defaut, Section 3)
 // Valeurs : AiProvider::OPENAI ou AiProvider::GEMINI
 static constexpr AiProvider DEFAULT_AI_PROVIDER =
-    AiProvider::GEMINI;
+    AiProvider::OPENAI;
 
 static constexpr const char* VOICE_NAME =
     defaultVoiceForProvider(DEFAULT_AI_PROVIDER);

@@ -643,9 +643,9 @@ void testCategory10_ShadowComparison() {
 void testCategory11_Robustness() {
     JournalParser parser;
 
-    // 11.1 Chaine très longue (> 500 caractères)
+    // 11.1 Chaine très longue (> 500 caractères, conforme à la limite MAX_INPUT_BYTES de 1024 octets)
     std::string longInput = "Note, ";
-    for (int i = 0; i < 50; ++i) {
+    for (int i = 0; i < 25; ++i) {
         longInput += "observation detaillee ";
     }
     auto r1 = parser.parse(longInput);

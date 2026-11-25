@@ -55,16 +55,9 @@ ParseResult JournalParser::parse(const std::string& rawText, bool confirmationPe
     ParseResult result;
     result.originalText = rawText;
 
-    // 0. Vérification des limites de robustesse mémoire (COR-10)
+    // 0. Vérification des limites de robustesse mémoire (COR-10, COR-12)
     if (rawText.size() > MAX_INPUT_BYTES) {
-        if (rawText.rfind("Note", 0) == 0 || rawText.rfind("note", 0) == 0 ||
-            rawText.rfind("NOTE", 0) == 0 || rawText.rfind("Mémorise", 0) == 0 ||
-            rawText.rfind("memorise", 0) == 0 || rawText.rfind("Enregistre", 0) == 0 ||
-            rawText.rfind("enregistre", 0) == 0 || rawText.rfind("Retiens", 0) == 0) {
-            result.intent = IntentId::ADD_NOTE;
-        } else {
-            result.intent = IntentId::NO_ACTION;
-        }
+        result.intent = IntentId::UNKNOWN;
         result.status = ParseStatus::INPUT_TOO_LONG;
         result.rawScore = 0;
         result.adjustedScore = 0;
@@ -75,7 +68,7 @@ ParseResult JournalParser::parse(const std::string& rawText, bool confirmationPe
     }
 
     if (!isValidUtf8(rawText)) {
-        result.intent = IntentId::NO_ACTION;
+        result.intent = IntentId::UNKNOWN;
         result.status = ParseStatus::INVALID_UTF8;
         result.rawScore = 0;
         result.adjustedScore = 0;
@@ -89,11 +82,18 @@ ParseResult JournalParser::parse(const std::string& rawText, bool confirmationPe
     NormalizedOutput normOut = TextNormalizer::normalize(rawText);
     result.normalizedText = normOut.normalized;
 
-    // 2. Tokenisation bornée (COR-10)
+    // 2. Tokenisation bornée (COR-10, COR-12)
+    // Rejet strict : ne jamais analyser une phrase tronquée pour déclencher une action
     std::vector<Token> tokens = Tokenizer::tokenize(normOut);
-    const bool tooManyTokens = (tokens.size() > MAX_TOKENS);
-    if (tooManyTokens) {
-        tokens.resize(MAX_TOKENS);
+    if (tokens.size() > MAX_TOKENS) {
+        result.intent = IntentId::UNKNOWN;
+        result.status = ParseStatus::TOO_MANY_TOKENS;
+        result.rawScore = 0;
+        result.adjustedScore = 0;
+        result.score = 0;
+        result.executable = false;
+        result.rejectionReason = "Nombre de tokens superieur a MAX_TOKENS (96)";
+        return result;
     }
 
     // 3. Analyse lexicale & Dictionnaire de concepts (avec fuzzy matching borné)
@@ -131,10 +131,6 @@ ParseResult JournalParser::parse(const std::string& rawText, bool confirmationPe
         rawText,
         normOut.normalized
     );
-
-    if (tooManyTokens) {
-        result.status = ParseStatus::TOO_MANY_TOKENS;
-    }
 
     const auto endTime = std::chrono::high_resolution_clock::now();
     const auto durationUs = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count();

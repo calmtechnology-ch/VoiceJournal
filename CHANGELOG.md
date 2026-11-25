@@ -2,6 +2,47 @@
 
 Toutes les évolutions notables de **VoiceJournal** sont consignées dans ce fichier.
 
+## [0.2.1] - 2026-11-25 — Consolidation Release
+
+Version de consolidation générale de VoiceJournal, établissant un socle logiciel unifié, robuste et sécurisé pour l'ESP32-S3 / M5Stack CoreS3.
+
+### Ajouté
+- **COR-11 — Validation centralisée des actions (`CommandRouter`)** :
+  - Découplage strict entre intention reconnue et action autorisée.
+  - Vérification systématique du statut de parsing, du score minimal, du caractère exécutable (`isExecutable`), de l'absence d'ambiguïté et des restrictions métier.
+  - Typage des intentions expérimentales (`ADD_TASK`, `ANALYZE_PROJECT`) en `CommandType::EXPERIMENTAL` avec `isExecutable = false` et réponse vocale dédiée : *« Cette fonction sera disponible dans une prochaine version. »*.
+  - Préservation inconditionnelle des annulations d'urgence (`CANCEL_CLEAR`, `STOP`).
+- **COR-12 — Rejet strict des entrées invalides (`JournalParser`)** :
+  - Rejet intégral sans tronquage des entrées dépassant 1 024 octets (`INPUT_TOO_LONG`) ou 96 tokens (`TOO_MANY_TOKENS`).
+  - Validation UTF-8 préalable immédiate (`INVALID_UTF8`) avant toute allocation dynamique.
+  - Désarmement immédiat d'une confirmation de suppression en attente en cas d'entrée invalide.
+- **COR-13 — Renforcement des règles de grammaire (`rules/grammar.json`)** :
+  - Ajout des contraintes `allowedTargets: ["JOURNAL", "JOURNAL_NOTE"]` et `forbiddenTargets: ["FILE", "PROJECT", "DEVICE"]` sur les requêtes de comptage et de lecture.
+  - Suppression du fuzzy matching sur toute confirmation destructive.
+  - Rejet de toute suppression visant un objet autre que le carnet complet (`supprime le fichier de configuration` $\rightarrow$ `UNKNOWN`).
+- **COR-14 — Consolidation du protocole série USB JSON (`SerialParserProtocol.h`)** :
+  - Réponses JSON normalisées et typées pour `PARSE`, `PARSE_SHADOW`, `PARSER_STATUS` et `PARSER_HELP`.
+  - Capacité du tampon série portée à 1 152 octets avec purge automatique de ligne en cas de débordement.
+  - Isolation totale du flux de diagnostic par rapport aux actions métier et au stockage NVS.
+- **COR-15 — Consolidation du mode SHADOW de non-régression** :
+  - Comparaison isolée des résultats d'intention, de payload, d'exécutabilité et de sécurité.
+  - Détection des divergences critiques (`SECURITY_BLOCKED`) et de structure d'exécution.
+  - Correction de l'armement prématuré de confirmation dans le parseur intelligent.
+- **Suite de tests de consolidation v0.2.1 (`test_consolidation_v021_suite`)** :
+  - 91 nouveaux tests unitaires et d'intégration validant les correctifs COR-11 à COR-15 et les suppressions sur NVS réelle.
+  - Total de la suite de tests natifs porté à **636 tests réussis à 100%**.
+- **Refonte de la documentation** :
+  - `README.md` synthétique répondant aux 8 questions clés.
+  - `USER_GUIDE.md`, `ARCHITECTURE.md`, `HARDWARE_VALIDATION.md`, `SERIAL_PARSER_PROTOCOL.md`, `ROADMAP.md` et `CONSOLIDATION_REPORT_v0.2.1.md`.
+  - Archivage des versions antérieures dans `docs/archive/v0.1.1/`, `docs/archive/v0.2.0/` et `docs/archive/v0.2.0.1/`.
+
+### Modifié
+- Fournisseur IA initial par défaut réaligné sur **OpenAI Realtime** (`AiProvider::OPENAI`) dans `AppConfig.h`.
+- Écran principal CoreS3 simplifié : affichage des seules informations utiles, suppression du jargon technique en dehors du mode LAB.
+- Indicateurs Lab enrichis des 5 statuts explicites : `AUTORISEE`, `FONCTION INDISPONIBLE`, `COMMANDE INCONNUE`, `COMMANDE AMBIGUE`, `REFUS DE SECURITE`.
+
+---
+
 ## [0.2.0.1] - 2026-11-25 — Contextual Parsing Corrective
 
 Version corrective majeure du moteur de compréhension du langage naturel (NLU) de VoiceJournal, faisant évoluer le modèle vers un **moteur contextuel local, déterministe et explicable** pour M5Stack CoreS3 (ESP32-S3).

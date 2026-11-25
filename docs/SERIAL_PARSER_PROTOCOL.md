@@ -1,10 +1,10 @@
-# Protocole de Test Série USB — VoiceJournal v0.2.0.1 (Section 17)
+# Protocole de Test Série USB — VoiceJournal v0.2.1 (Section 17)
 
 ## 1. Présentation
 
-VoiceJournal v0.2.0.1 intègre un mode de diagnostic et d'évaluation directe via la liaison série USB (port CDC natif ESP32-S3 / CP2104).
+VoiceJournal v0.2.1 intègre un mode de diagnostic et d'évaluation directe via la liaison série USB (port CDC natif ESP32-S3 / CP2104).
 
-Ce mode permet aux développeurs et aux bancs de test automatisés d'injecter du texte directement dans le moteur de parsing contextuel **sans passer par la capture microphone ni la transcription vocale (STT)**, sans latence réseau et **sans aucun effet de bord métier** (aucun enregistrement en NVS, aucun appel aux API d'IA).
+Ce mode permet aux développeurs et aux bancs de test automatisés d'injecter du texte directement dans le moteur de parsing contextuel **sans passer par la capture microphone ni la transcription vocale (STT)**, sans latence réseau et **sans aucun effet de bord métier** (aucun enregistrement en NVS, aucun appel aux API d'IA, aucune modification de session vocale).
 
 ---
 
@@ -16,6 +16,7 @@ Ce mode permet aux développeurs et aux bancs de test automatisés d'injecter du
 - **Bits de stop** : 1
 - **Contrôle de flux** : Aucun
 - **Fin de ligne** : `\n` (LF) ou `\r\n` (CRLF)
+- **Capacité tampon d'entrée** : 1 152 octets (aligné sur la limite max de 1 024 octets de texte avec préfixe de commande). En cas de débordement, le reste de la ligne est vidé sans déclencher de commande partielle.
 
 ---
 
@@ -39,93 +40,46 @@ PARSE Je dois tester Gemini demain
 {
   "command": "PARSE",
   "input": "Je dois tester Gemini demain",
-  "normalized": "je dois tester gemini demain",
   "intent": "ADD_TASK",
-  "executable": false,
   "status": "OK",
-  "scores": {
-    "raw": 94,
-    "adjusted": 94,
-    "fuzzy_penalty": 0
-  },
-  "rule": "task_obligation",
-  "roles": {
-    "je": "SUBJECT",
-    "dois": "OBLIGATION",
-    "tester": "ACTION",
-    "gemini": "ENTITY",
-    "demain": "TIME"
-  },
-  "frame": {
-    "subject": "je",
-    "modality": "obligation",
-    "action": "tester",
-    "object": "Gemini",
-    "target": "UNKNOWN_OBJECT",
-    "entity": "Gemini",
-    "relative_date": "demain",
-    "negation_scope": "none",
-    "global_scope": false
-  },
-  "slots": {
-    "entity": "Gemini",
-    "date_relative": "demain"
-  },
-  "duration_us": 216
+  "action": "tester",
+  "entity": "Gemini",
+  "relativeDate": "demain",
+  "executable": false
 }
 ```
 
 ---
 
 ### 3.2 Commande `PARSE_SHADOW <texte>`
-Soumet une phrase au comparateur miroir SHADOW (moteur historique v0.1.1 vs moteur contextuel v0.2.0.1).
+Soumet une phrase au comparateur miroir SHADOW (moteur historique v0.1.1 vs moteur contextuel v0.2.1).
 
 **Syntaxe :**
 ```text
 PARSE_SHADOW <texte de la commande>
 ```
 
-**Exemple 1 (Nouvelle intention) :**
+**Exemple :**
 ```text
-PARSE_SHADOW Retrouve les bugs de VoiceKit
+PARSE_SHADOW Lis la derniere note
 ```
 
 **Réponse :**
 ```json
 {
   "command": "PARSE_SHADOW",
-  "input": "Retrouve les bugs de VoiceKit",
-  "shadow_status": "NEW_INTENT",
-  "legacy_type": "UNKNOWN",
-  "intel_intent": "SEARCH_NOTES",
-  "blocked_by_divergence": false,
-  "duration_us": 347
-}
-```
-
-**Exemple 2 (Sécurité destructive bloquée) :**
-```text
-PARSE_SHADOW Efface le fichier de configuration
-```
-
-**Réponse :**
-```json
-{
-  "command": "PARSE_SHADOW",
-  "input": "Efface le fichier de configuration",
-  "shadow_status": "SECURITY_BLOCKED",
-  "legacy_type": "REQUEST_CLEAR",
-  "intel_intent": "UNKNOWN",
-  "blocked_by_divergence": true,
-  "executed_type": "UNKNOWN",
-  "duration_us": 312
+  "input": "Lis la derniere note",
+  "shadowStatus": "MATCH",
+  "legacyType": "READ_LAST",
+  "intelIntent": "READ_LAST_NOTE",
+  "executable": true
 }
 ```
 
 ---
 
 ### 3.3 Commande `PARSER_STATUS`
-Retourne l'état opérationnel et l'empreinte mémoire du moteur de parsing.
+Retourne l'état opérationnel et l'empreinte mémoire du système embarqué.
 
 **Syntaxe :**
 ```text
@@ -135,33 +89,58 @@ PARSER_STATUS
 **Réponse :**
 ```json
 {
-  "version": "0.2.0.1",
+  "command": "PARSER_STATUS",
+  "version": "0.2.1",
   "mode": "INTELLIGENT",
-  "lexicon_entries": 231,
-  "phrase_entries": 51,
-  "grammar_rules": 19,
-  "max_tokens": 96,
-  "max_input_bytes": 1024,
-  "free_heap_bytes": 241404,
-  "uptime_ms": 128450
+  "freeHeap": 178240,
+  "maxAllocHeap": 114676,
+  "freePsram": 16645312,
+  "rulesCount": 19,
+  "phrasesCount": 51
 }
 ```
 
 ---
 
 ### 3.4 Commande `PARSER_HELP`
-Affiche le résumé d'aide du protocole série en texte clair.
+Retourne la liste des commandes série disponibles.
 
 **Syntaxe :**
 ```text
 PARSER_HELP
 ```
 
+**Réponse :**
+```json
+{
+  "command": "PARSER_HELP",
+  "commands": [
+    "PARSE <texte>",
+    "PARSE_SHADOW <texte>",
+    "PARSER_STATUS",
+    "PARSER_HELP"
+  ]
+}
+```
+
 ---
 
-## 4. Garanties d'Isolation et de Sécurité
+### 3.5 Gestion des Erreurs et Débordements
 
-1. **Aucun effet de bord métier** : Les commandes exécutées via `PARSE` ou `PARSE_SHADOW` n'arment jamais la confirmation réelle de suppression de l'appareil (`clearPending_` n'est pas modifié).
-2. **Pas d'interaction audio** : Le haut-parleur, le microphone et le module audio VoiceKit restent inactifs.
-3. **Zéro consommation de quota API** : Aucune communication réseau n'est initiée avec OpenAI ou Google Gemini.
-4. **Idempotence** : L'exécution répétée de commandes via le protocole série ne modifie pas l'état du carnet stocké en NVS.
+En cas de commande non reconnue ou de dépassement de capacité :
+
+```json
+{
+  "command": "ERROR",
+  "status": "INPUT_TOO_LONG",
+  "message": "Ligne serie depassant la capacite maximale (1152)"
+}
+```
+ou :
+```json
+{
+  "command": "ERROR",
+  "status": "UNKNOWN_COMMAND",
+  "message": "Commande inconnue : FOOBAR"
+}
+```

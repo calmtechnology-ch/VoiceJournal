@@ -1,270 +1,187 @@
-# VoiceJournal v0.2.0.1 — Carnet de laboratoire vocal intelligent & Moteur NLU Contextuel
+# VoiceJournal v0.2.1 — Carnet de laboratoire vocal autonome
 
-Application embarquée C++17 pour **M5Stack CoreS3 (ESP32-S3)** construite sur la façade publique **`<VoiceKit.h>`** (**VoiceKit**, révision Git vérifiée `16646c73acf01a8d57408391bc6de15a288b8910`), compatible **OpenAI Realtime** (fournisseur par défaut) et **Google Gemini Live**.
+Application embarquée en C++17 pour **M5Stack CoreS3** (ESP32-S3), propulsée par la façade publique [`<VoiceKit.h>`](https://github.com/calmtechnology-ch/VoiceKit) (révision `16646c73acf01a8d57408391bc6de15a288b8910`). 
 
-La version **v0.2.0.1 — Contextual Parsing Corrective** dote VoiceJournal d'un **moteur de compréhension du langage naturel contextuel**, local, déterministe, explicable et optimisé pour l'ESP32-S3. Le moteur comprend désormais les relations fines entre les mots, les concepts, les actions et leurs objets, tout en restant strictement hors-ligne pour la phase d'analyse sémantique.
+VoiceJournal intègre un moteur de compréhension du langage naturel (NLU) déterministe hors-ligne, un double fournisseur d'IA vocale (**OpenAI Realtime** par défaut, basculable vers **Google Gemini Live**), et un stockage sécurisé à double page NVS A/B.
 
-> **Statut de validation :**
-> - **505 tests natifs C++17 réussis à 100%** (36 assertions historiques v0.1.1 + 220 tests NLU v0.2.0 + 249 tests contextuels v0.2.0.1).
-> - **Dataset de validation contextuelle 53/53 cas réussis à 100%** sur le simulateur console PC.
-> - **Compilation PlatformIO (`m5stack-cores3`) validée sans avertissement** :
->   - **RAM : 26,3%** (86 276 octets utilisés / 327 680 octets) — seulement **+360 octets statiques** par rapport à la v0.2.0 (85 916 octets), largement en-dessous du plafond de +16 Ko.
->   - **Flash : 87,9%** (1 844 049 octets utilisés / 2 097 152 octets).
-> - **Référence matérielle conservée** : le rapport matériel de la v0.2.0 (8 PASS, 0 FAIL, 7 NOT RUN) est consigné dans [`docs/baseline/BASELINE_v0.2.0.md`](docs/baseline/BASELINE_v0.2.0.md) et sert de référence de non-régression.
+La version **v0.2.1** est une **consolidation industrielle** garantissant l'intégrité mémoire, le rejet strict des entrées invalides, l'unification du protocole USB en JSON et la sécurité absolue des commandes destructives.
 
----
-
-## 1. Présentation de VoiceJournal v0.2.0.1
-
-**VoiceJournal** transforme un **M5Stack CoreS3** autonome (sans aucun capteur ni module externe) en carnet de laboratoire vocal. L'utilisateur dicte ses observations techniques en français, les stocke localement dans la mémoire non volatile (NVS), les relit à la voix et demande à l'IA (**OpenAI Realtime** par défaut ou **Google Gemini Live**) d'en produire une synthèse factuelle courte.
-
-En version **v0.2.0.1**, le moteur dépasse la simple reconnaissance par mots-clés et construit une véritable représentation structurée de l'intention grâce à un pipeline contextuel en 11 étapes :
-
-```text
-Texte original
-       │
-Normalisation UTF-8 (RFC 3629)
-       │
-Tokenisation (max 96 tokens)
-       │
-Analyse lexicale (231 concepts en Flash)
-       │
-Reconnaissance des locutions (longest match, 51 expressions)
-       │
-Analyse des rôles sémantiques (12 rôles)
-       │
-Construction des relations & analyse d'objets (8 catégories de cibles)
-       │
-Grammaire contextuelle (19 règles déclaratives ordonnées)
-       │
-Extraction des paramètres & portée des négations
-       │
-Validation de sécurité centralisée
-       │
-ParseResult ──► CommandRouter (SHADOW / INTELLIGENT / LEGACY)
-```
+> **Statut de qualification v0.2.1 :**
+> - **636 tests unitaires natifs C++17 réussis à 100%** (36 legacy, 220 NLU, 289 contextuels, 91 consolidation).
+> - **Jeu de données contextuel 53/53 cas réussis à 100%** sur le simulateur PC.
+> - **Empreinte mémoire ESP32-S3 optimisée** : RAM 27,8% (90 996 / 327 680 B), Flash 95,3% (1 998 589 / 2 097 152 B).
+> - **Protocole série JSON standardisé** pour l'interfaçage avec de futures applications PC.
 
 ---
 
-## 2. Fonctionnalités majeures (v0.2.0.1)
+## 1. Qu'est-ce que VoiceJournal ?
 
-### Pipeline sémantique contextuel
-- **Rôles sémantiques formels (COR-01)** : typage des unités lexicales en 12 rôles (`UNKNOWN`, `SUBJECT`, `ACTION`, `OBJECT`, `ENTITY`, `QUANTIFIER`, `QUALIFIER`, `TIME`, `NEGATION`, `OBLIGATION`, `QUESTION`, `CONNECTOR`, `PAYLOAD`) et construction de `SemanticFrame`.
-- **Reconnaissance de locutions au plus long préfixe (COR-02)** : reconnaissance déterministe de 51 locutions (*"je dois"*, *"il faut que"*, *"penser à"*, *"ne pas oublier de"*, *"la dernière note"*, *"toutes les observations"*, *"ce matin"*, etc.) avec masques binaires sans allocation dynamique.
-- **Grammaire contextuelle légère (COR-03 & COR-04)** : 19 règles combinatoires ordonnées dans `rules/grammar.json`, générées en tables `constexpr` C++ (`ParserTables.h`) par `tools/generate_parser_tables.py`.
-- **Typage strict des actions et de leurs objets (COR-05)** : distinction catégorielle (`TargetCategory`) entre `JOURNAL`, `JOURNAL_NOTE`, `TASK`, `PROJECT`, `PROBLEM`, `FILE`, `DEVICE`, `UNKNOWN_OBJECT`. Rejet strict en `UNKNOWN` de toute suppression ciblant un fichier, un projet, un équipement ou une note singulière sans portée globale.
-- **Portée fine des négations (COR-06)** : distinction entre négation de l'action principale, négation d'obligation, annulation et négation au sein d'une note dictée (*"Note, ne supprime pas les fichiers"* $\rightarrow$ `ADD_NOTE`).
-- **Découplage fuzzy matching et ambiguïtés (COR-07)** : ambiguïté calculée sur le score brut avant pénalité fuzzy ; détection des collisions directes entre verbes d'action concurrents ; exclusion formelle du fuzzy sur les chiffres, versions, identifiants et confirmations.
-- **Validation centralisée et sécurité destructive (COR-08)** : validation centralisée dans `CommandRouter` ; verrouillage automatique `SECURITY_BLOCKED` en mode `SHADOW` en cas de divergence sur une intention destructive.
-- **Comparateur SHADOW complet (COR-09)** : 7 statuts formels (`MATCH`, `SEMANTIC_EQUIVALENT`, `SMART_UPGRADE`, `TARGET_MISMATCH`, `DIVERGENT`, `SECURITY_BLOCKED`, `SYNTAX_ERROR`).
-- **Limites bornées et conformité UTF-8 (COR-10)** : `MAX_INPUT_BYTES = 1024`, `MAX_TOKENS = 96`, validation UTF-8 conforme RFC 3629 rejetant les surlongueurs et les surrogates.
-
-### Nouveaux outils d'exploitation et de diagnostic
-- **Mode diagnostic USB série (sans capture audio)** :
-  - Commandes série textuelles directes : `PARSE <texte>`, `PARSE_SHADOW <texte>`, `PARSER_STATUS`, `PARSER_HELP`.
-  - Format de réponse standardisé en JSON compact.
-  - Isolation stricte : n'altère ni le stockage NVS ni la machine à états vocale.
-- **Parsing Lab tactile CoreS3 à 3 vues** :
-  - Bouton `[LAB]` permettant de cycler entre :
-    - **Vue 1 : Résultat** (Intention, score, statut, cible, portée, négation, timing µs).
-    - **Vue 2 : Contexte sémantique** (Transcription défilante, rôles sémantiques token par token, entités détectées).
-    - **Vue 3 : Comparaison Shadow** (Statut Shadow, intention Legacy vs Contextuelle, scores respectifs).
-- **Simulateur autonome PC étendu** :
-  - Support de `--dataset <path>` avec exécution automatisée du jeu de validation contextuel (`tests/datasets/contextual_parsing_fr.json`).
+**VoiceJournal** transforme un boîtier autonome M5Stack CoreS3 en carnet de laboratoire vocal pour ingénieurs, techniciens et makers :
+1. **Dictée d'observations techniques** : capturez vos notes sur le terrain ou à l'établi sans clavier ni écran.
+2. **Stockage non volatil local (NVS A/B)** : conserve jusqu'à 5 observations de 180 octets chacune, résistantes aux coupures d'alimentation, sans dépendre du cloud pour la persistance.
+3. **Moteur NLU contextuel local (< 1 ms)** : analyse sémantique déterministe en C++17 embarqué sur l'ESP32-S3, distinguant précisément les actions, les cibles, les négations et les ambiguïtés.
+4. **Synthèse vocale intelligente** : demandez à l'IA vocale (OpenAI Realtime ou Google Gemini Live) de relire vos observations ou d'en produire une synthèse structurée.
+5. **Ergonomie industrielle sécurisée** : bouton Push-To-Talk (PTT) à deux clics, bouton STOP prioritaire instantané, et désarmement automatique des suppressions en cas de doute.
 
 ---
 
-## 3. Matériel nécessaire
+## 2. Matériel nécessaire
 
-- **M5Stack CoreS3** (ESP32-S3, 16 Mo Flash, 8 Mo PSRAM, écran tactile 320 × 240, microphones ES7210 et haut-parleur AW88298 intégrés).
-- Câble USB-C données + alimentation (≥ 5 V / 1 A).
-- Réseau **Wi-Fi 2.4 GHz** (l'ESP32-S3 ne supporte pas le 5 GHz).
-- Clé API **OpenAI Realtime** ([OpenAI Platform](https://platform.openai.com/api-keys)) et/ou clé API **Google Gemini Live** ([Google AI Studio](https://aistudio.google.com/)).
-- Aucun capteur ou module supplémentaire requis.
-
----
-
-## 4. Dépendances et licences
-
-Déclarées dans `platformio.ini` :
-
-- Plateforme : `espressif32@6.9.0` (framework Arduino-ESP32, C++17 `-std=gnu++17`, licence Apache-2.0 / LGPL-2.1).
-- `m5stack/M5CoreS3@1.0.0` (licence MIT).
-- `m5stack/M5Unified@0.2.23` (inclut M5GFX, licence MIT).
-- `Preferences` (bibliothèque standard Arduino-ESP32 pour la NVS).
-- **VoiceKit** (`https://github.com/calmtechnology-ch/VoiceKit.git#16646c73acf01a8d57408391bc6de15a288b8910`, licence MIT).
-
-Le projet **VoiceJournal** est distribué sous licence **MIT** (voir [LICENSE](LICENSE)).
+- **M5Stack CoreS3** (ESP32-S3 dual-core, 16 Mo Flash, 8 Mo PSRAM, écran tactile 320 × 240, double microphone ES7210, haut-parleur AW88298 et PMIC AXP2101).
+- **Câble USB-C** haute qualité assurant l'alimentation (≥ 5 V / 1 A) et la liaison de données.
+- **Réseau Wi-Fi 2,4 GHz** (802.11 b/g/n — le 5 GHz n'est pas supporté par l'ESP32-S3).
+- **Clé API d'un fournisseur IA** :
+  - [OpenAI Realtime API](https://platform.openai.com/api-keys) (fournisseur initial par défaut).
+  - [Google Gemini Live API](https://aistudio.google.com/) (Google AI Studio).
+- Aucun capteur ou module Grove/externe n'est requis.
 
 ---
 
-## 5. Configuration et Compilation
+## 3. Installation rapide
 
-### Configuration Wi-Fi et Clés API (`include/secrets.h`)
-1. Copiez `include/secrets.example.h` vers `include/secrets.h` :
-   ```powershell
-   Copy-Item include\secrets.example.h include\secrets.h
-   ```
-2. Renseignez vos identifiants :
-   ```cpp
-   #pragma once
-   #define WIFI_SSID     "MON_WIFI"
-   #define WIFI_PASSWORD "MON_MOT_DE_PASSE"
+### Prérequis
+- [VS Code](https://code.visualstudio.com/) avec l'extension [PlatformIO IDE](https://platformio.org/) ou le CLI PlatformIO (`pio`).
+- Un compilateur C++17 local (GCC / Clang / MSVC) pour exécuter la suite de tests natifs sur PC.
 
-   #define OPENAI_KEY    "MA_CLE_OPENAI"
-   #define GEMINI_KEY    "MA_CLE_GEMINI"
-   ```
+### Téléchargement et compilation
+```bash
+# Cloner le dépôt et ouvrir le dossier VoiceJournal_CoreS3
+git clone https://github.com/calmtechnology-ch/VoiceJournal.git
+cd VoiceJournal/VoiceJournal_CoreS3
 
-### Compilation et téléversement PlatformIO
-Depuis le dossier `VoiceJournal_CoreS3/` :
+# Copier le fichier d'exemple des secrets
+cp include/secrets.example.h include/secrets.h
 
-```powershell
-# Compilation du firmware
-pio run -e m5stack-cores3
-
-# Téléversement sur M5Stack CoreS3 (USB-C)
+# Éditer include/secrets.h avec vos identifiants Wi-Fi et clés API
+# Puis compiler et téléverser sur le CoreS3 connecté en USB :
 pio run -e m5stack-cores3 -t upload
 
-# Moniteur série (115 200 bauds)
+# Ouvrir le moniteur série USB à 115 200 bauds :
 pio device monitor -b 115200
 ```
 
----
+### Exécution des tests natifs et du simulateur PC
+```bash
+# Compiler et exécuter les 636 tests unitaires sur PC :
+cd tests
+mkdir build && cd build
+cmake ..
+cmake --build .
+./voicejournal_tests
 
-## 6. Utilisation du mode diagnostic série USB
-
-Le CoreS3 intègre un interpréteur de commandes de test sur le port série USB (115 200 bauds), permettant de valider le parsing sans connexion réseau ni enregistrement vocal :
-
-```text
-PARSE Je dois tester Gemini demain.
-{"status":"OK","intent":"ADD_TASK","score":95,"executable":false,"slots":{"action":"tester","entity":"gemini","time":"demain"}}
-
-PARSE_SHADOW Supprime le fichier.
-{"status":"OK","contextual_intent":"UNKNOWN","legacy_intent":"UNKNOWN","shadow_status":"MATCH"}
-
-PARSER_STATUS
-{"parser_version":"0.2.0.1","rules_count":19,"phrases_count":51,"lexicon_size":231,"max_input_bytes":1024,"max_tokens":96}
-
-PARSER_HELP
-{"commands":["PARSE <texte>","PARSE_SHADOW <texte>","PARSER_STATUS","PARSER_HELP"]}
+# Lancer l'évaluation du jeu de données contextuel :
+./voicejournal_simulator --dataset ../datasets/contextual_parsing_fr.json
 ```
 
 ---
 
-## 7. Exemples de commandes vocales
+## 4. Configuration
 
-| Formulation prononcée | Intention reconnue | Type | Action système |
-|---|---|---|---|
-| *« Note, le prototype redémarre »* | `ADD_NOTE` | Exécutable | Enregistre l'observation en NVS |
-| *« Mémorise que le WiFi fonctionne »* | `ADD_NOTE` | Exécutable | Enregistre l'observation en NVS |
-| *« Note, ne supprime pas les fichiers »* | `ADD_NOTE` | Exécutable | Enregistre l'observation en NVS (négation préservée dans la charge utile) |
-| *« Lis la dernière note »* | `READ_LAST_NOTE` | Exécutable | Lit la dernière note par TTS |
-| *« Combien de notes ? »* | `COUNT_NOTES` | Exécutable | Annonce le nombre d'observations |
-| *« Fais le bilan »* | `ANALYZE_NOTES` | Exécutable | Synthèse IA globale des notes |
-| *« Efface toutes les notes »* | `REQUEST_CLEAR` | Exécutable | Déclenche la fenêtre de confirmation (15 s) |
-| *« Confirmer la suppression »* | `CONFIRM_CLEAR` | Exécutable | Efface définitivement le carnet |
-| *« Ne supprime pas les notes »* | `CANCEL_CLEAR` | Exécutable | Annule la suppression en attente |
-| *« Je dois tester Gemini demain »* | `ADD_TASK` | Expérimentale | Reconnue (obligation + action + entité + date) |
-| *« N'oublie pas de tester Gemini »* | `ADD_TASK` | Expérimentale | Reconnue (obligation positive par locution) |
-| *« Cherche les bugs de VoiceKit »* | `SEARCH_NOTES` | Expérimentale | Reconnue (recherche + problème + entité) |
-| *« Donne-moi une synthèse de RuleBot »* | `ANALYZE_PROJECT` | Expérimentale | Reconnue (synthèse + projet) |
-| *« Efface le fichier »* | `UNKNOWN` | Rejet | Rejeté : cible `FILE` non autorisée |
-| *« Supprime le projet VoiceKit »* | `UNKNOWN` | Rejet | Rejeté : cible `PROJECT` non autorisée |
-| *« Lis la dernière note et fais le bilan »* | `AMBIGUOUS` | Ambiguïté | Détectée : deux verbes d'action concurrents |
+Toutes les options de l'application sont centralisées dans deux fichiers d'en-tête :
+
+### Clés et accès réseau : `include/secrets.h`
+Créez ce fichier à partir de [`include/secrets.example.h`](include/secrets.example.h) :
+```cpp
+#pragma once
+
+// Identifiants Wi-Fi (2.4 GHz uniquement)
+#define WIFI_SSID     "MonReseauWifi"
+#define WIFI_PASSWORD "MonMotDePasse"
+
+// Clés API des fournisseurs IA
+#define OPENAI_KEY    "sk-proj-..."
+#define GEMINI_KEY    "AIzaSy..."
+```
+
+### Paramètres de l'application : `include/AppConfig.h`
+Modifiez les paramètres globaux dans [`include/AppConfig.h`](include/AppConfig.h) si nécessaire :
+- `DEFAULT_AI_PROVIDER` : `AiProvider::OPENAI` (par défaut) ou `AiProvider::GEMINI`.
+- `DEFAULT_PARSER_MODE` : `ParserMode::INTELLIGENT` (défaut), `SHADOW` ou `LEGACY`.
+- `MAX_OBSERVATIONS` : 5 observations conservées en NVS.
+- `MAX_OBSERVATION_LENGTH` : 180 octets par observation.
+- `DISPLAY_ORIENTATION` : orientation paysage native 320 × 240 (M5GFX rotation 1).
 
 ---
 
-## 8. Organisation du code
+## 5. Commandes vocales disponibles (v0.2.1)
 
-```text
-VoiceJournal_CoreS3/
-├── LICENSE                 # Licence MIT
-├── platformio.ini          # Configuration PlatformIO (m5stack-cores3, C++17, VoiceKit fige)
-├── no_ota.csv              # Table de partitions 2 Mo app0
-├── README.md
-├── CHANGELOG.md
-├── rules/                  # Définitions déclaratives de la grammaire et du lexique
-│   ├── concepts.json       # Lexique et concepts sémantiques (231 entrées)
-│   ├── phrases.json        # 51 locutions ordonnées (longest match)
-│   ├── grammar.json        # 19 règles contextuelles déclaratives
-│   ├── entities.json       # Entités reconnues (gemini, voicekit, rulebot, etc.)
-│   └── aliases.json        # Alias et synonymes
-├── tools/
-│   └── generate_parser_tables.py # Générateur Python des tables C++ PROGMEM
-├── include/
-│   ├── secrets.example.h   # Modèle de configuration des secrets
-│   ├── AppConfig.h         # Configuration globale, profils IA et modes de parsing
-│   ├── JournalStorage.h    # Persistance NVS A/B fiabilisée
-│   ├── CommandRouter.h     # Routeur de commandes, validation d'action et mode SHADOW
-│   ├── VoiceController.h   # Machine à états applicative et orchestration vocale
-│   ├── JournalUI.h         # Interface tactile M5GFX 320x240 et Parsing Lab 3 vues
-│   └── parser/             # Moteur de compréhension contextuelle C++17
-│       ├── ParserTypes.h          # Rôles sémantiques, catégories de cibles, statuts
-│       ├── ParserTables.h         # Tables compilées en mémoire Flash
-│       ├── JournalParser.h        # Façade principale du pipeline de parsing
-│       ├── PhraseRecognizer.h     # Reconnaissance de locutions au plus long préfixe
-│       ├── SemanticRoleAnalyzer.h # Étiquetage des rôles sémantiques et frames
-│       ├── GrammarEvaluator.h     # Évaluateur de la grammaire contextuelle
-│       ├── NegationDetector.h     # Détecteur contextuel de portée des négations
-│       ├── SlotExtractor.h        # Extracteur générique de slots
-│       └── IntentMatcher.h        # Décision d'intention et détection d'ambiguïtés
-├── src/
-│   ├── main.cpp            # Boucle principale, gestion tactile et protocole série USB
-│   ├── JournalStorage.cpp
-│   ├── CommandRouter.cpp
-│   ├── VoiceController.cpp
-│   ├── JournalUI.cpp
-│   └── parser/
-│       ├── JournalParser.cpp
-│       ├── PhraseRecognizer.cpp
-│       ├── SemanticRoleAnalyzer.cpp
-│       ├── GrammarEvaluator.cpp
-│       ├── NegationDetector.cpp
-│       ├── SlotExtractor.cpp
-│       └── IntentMatcher.cpp
-├── simulator/
-│   ├── main.cpp            # Simulateur console PC (--eval, --shadow, --dataset)
-│   └── CMakeLists.txt
-├── tests/
-│   ├── TEST_PLAN.md        # Plan de test exhaustif (505 scénarios)
-│   ├── mocks/              # Mocks NVS, VoiceKit et Arduino pour tests natifs PC
-│   ├── datasets/
-│   │   └── contextual_parsing_fr.json # Dataset de référence contextuel (53 cas)
-│   ├── parser/
-│   │   ├── test_nlu_suite.cpp         # 220 tests NLU v0.2.0
-│   │   └── test_contextual_suite.cpp  # 249 tests contextuels v0.2.0.1
-│   └── test_main.cpp       # Lanceur de la suite de tests complète (505 assertions)
-└── docs/
-    ├── baseline/
-    │   ├── BASELINE_v0.1.1.md         # Baseline v0.1.1
-    │   └── BASELINE_v0.2.0.md         # Baseline v0.2.0 (8 PASS, 0 FAIL, 7 NOT RUN)
-    ├── CONTEXTUAL_PARSING.md          # Architecture complète du pipeline contextuel
-    ├── GRAMMAR_REFERENCE.md           # Référence formelle de la grammaire (rôles, cibles, règles)
-    ├── PARSER_USER_GUIDE.md           # Guide utilisateur du parser et Parsing Lab
-    ├── SERIAL_PARSER_PROTOCOL.md      # Protocole USB série de diagnostic
-    ├── REGRESSION_REPORT_v0.2.0.1.md  # Rapport complet des 505 tests natifs
-    ├── CORRECTIVE_REPORT_v0.2.0.1.md  # Bilan correctif COR-01 à COR-10
-    └── HARDWARE_VALIDATION.md         # Grille de validation matérielle CoreS3
-```
+VoiceJournal v0.2.1 se concentre sur un ensemble officiel de fonctionnalités robustes et hautement fiables :
+
+| Fonction | Exemples de phrases vocales | Action effectuée |
+|---|---|---|
+| **Ajouter une note** | *"Note, le prototype fonctionne"*<br>*"Mémorise que la tension est de 3.3V"*<br>*"Enregistre la mesure du capteur"* | Enregistre l'observation en NVS (max 5) et met à jour l'écran. |
+| **Relire la dernière note** | *"Lis la dernière note"*<br>*"Relis la note"* | L'IA vocale dicte le contenu exact de la dernière observation. |
+| **Compter les notes** | *"Combien de notes ?"*<br>*"Quel est le nombre d'observations ?"* | Affiche et énonce le nombre de notes enregistrées. |
+| **Analyser les observations** | *"Fais le bilan"*<br>*"Résume les observations"* | L'IA synthétise l'ensemble des notes du carnet. |
+| **Demander la suppression** | *"Efface toutes les notes"*<br>*"Supprime le carnet"* | Arme la confirmation de suppression (sécurité 10 s). |
+| **Confirmer la suppression** | *"Confirmer la suppression"* | Efface l'ensemble de la partition NVS (si armé). |
+| **Annuler** | *"Annuler"* / *"Non"* / *"Stop"* | Désarme la suppression ou interrompt l'action en cours. |
+| **Aide** | *"Quelles sont les commandes ?"*<br>*"Aide"* | Liste les commandes vocales supportées. |
+
+> [!NOTE]
+> Les intentions de recherche par date (`SEARCH_BY_DATE`), recherche thématique (`SEARCH_NOTES`), gestion de tâches (`ADD_TASK`, `LIST_TASKS`) et analyse de projet (`ANALYZE_PROJECT`) sont reconnues par le moteur NLU mais sont volontairement désactivées dans l'application v0.2.1 (*"Cette fonction sera disponible dans une prochaine version"*). Elles constituent le cœur de la version **v0.3.0** détaillée dans le document [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
-## 9. Procédure de test et validation
+## 6. Utilisation du Parsing Lab
 
-### Tests unitaires natifs PC (505 tests, sans matériel)
-```powershell
-mkdir tests\build -Force
-g++ -std=c++17 -Wall -Wextra -Werror -Itests/mocks -Iinclude -Itests `
-    src/JournalStorage.cpp src/CommandRouter.cpp src/VoiceController.cpp src/JournalUI.cpp `
-    src/parser/*.cpp tests/parser/*.cpp tests/test_main.cpp `
-    -o tests/build/voicejournal_tests.exe
-.\tests\build\voicejournal_tests.exe
-```
+Le **Parsing Lab** est un outil de diagnostic tactile embarqué accessible directement sur le CoreS3 :
 
-### Évaluation du dataset contextuel sur simulateur PC
-```powershell
-.\simulator\voicejournal_simulator.exe --dataset tests/datasets/contextual_parsing_fr.json
-```
+1. Sur l'écran principal, appuyez sur le bouton **`[LAB]`** situé discrètement en haut à droite.
+2. Chaque appui successif fait défiler les 3 vues disponibles :
+   - **Vue 1 — Résultat** : affiche l'intention reconnue, le score de confiance (%), le statut d'autorisation (`AUTORISEE`, `FONCTION INDISPONIBLE`, `COMMANDE INCONNUE`, `COMMANDE AMBIGUE`, `REFUS DE SECURITE`), la cible sémantique, la portée et le temps d'analyse en microsecondes.
+   - **Vue 2 — Contexte sémantique** : affiche la transcription brute reçue, les rôles grammaticaux associés à chaque token et les entités extraites.
+   - **Vue 3 — Comparaison Shadow** : compare en temps réel la décision du moteur contextuel intelligent avec celle de l'analyseur historique (Legacy) pour vérifier la non-régression.
+3. Le bouton rouge **`STOP`** reste visible et prioritaire en bas à droite de l'écran Lab.
+4. Appuyez sur **`[RETOUR]`** pour revenir à l'écran standard.
 
-### Tests matériels sur M5Stack CoreS3
-Consultez la grille de validation dans [`docs/HARDWARE_VALIDATION.md`](docs/HARDWARE_VALIDATION.md). Les tests de référence v0.2.0 (8 PASS) sont conservés sans régression.
+---
+
+## 7. Utilisation du mode diagnostic série (USB)
+
+Le protocole série USB permet de tester et qualifier le moteur de parsing sans micro, sans connexion Wi-Fi et sans consommer de jetons d'API cloud. Les commandes sont strictement isolées de la machine d'état audio et du carnet NVS.
+
+Connectez le CoreS3 en USB à 115 200 bauds et envoyez les commandes suivantes :
+
+| Commande série | Description | Format de réponse (JSON) |
+|---|---|---|
+| `PARSE <texte>` | Analyse une phrase avec le moteur actif | `{"command":"PARSE","input":"...","intent":"...","status":"OK","executable":true}` |
+| `PARSE_SHADOW <texte>` | Analyse comparative Intelligent vs Legacy | `{"command":"PARSE_SHADOW","shadowStatus":"MATCH","divergent":false}` |
+| `PARSER_STATUS` | Affiche l'état courant et la mémoire | `{"command":"PARSER_STATUS","version":"0.2.1","mode":"INTELLIGENT",...}` |
+| `PARSER_HELP` | Liste des commandes série acceptées | `{"command":"PARSER_HELP","supportedCommands":[...]}` |
+
+Pour la spécification complète de la structure des réponses JSON et des exemples de trames, consultez [`docs/SERIAL_PARSER_PROTOCOL.md`](docs/SERIAL_PARSER_PROTOCOL.md).
+
+---
+
+## 8. Résolution des problèmes courants
+
+| Symptôme | Cause probable | Solution |
+|---|---|---|
+| **Écran figé sur "Connexion Wi-Fi..."** | Réseau 5 GHz ou identifiants incorrects dans `include/secrets.h`. | Vérifier que le SSID est sur la bande 2,4 GHz et que le mot de passe est exact. |
+| **Erreur "Clé API invalide ou absente"** | Clé OpenAI ou Gemini manquante ou laissée avec la valeur modèle. | Vérifier la clé dans `include/secrets.h` sans espaces superflus. |
+| **Le PTT ne répond pas au clic** | Conflit tactile ou clic trop bref. | Effectuer un appui franc au centre du bouton bleu `PARLER`. |
+| **La suppression du carnet ne fonctionne pas** | Absence de portée globale ou non-confirmation dans les 10 secondes. | Dire explicitement *"Efface toutes les notes"*, puis *"Confirmer la suppression"* sous 10 s. |
+| **Le CoreS3 ne répond plus pendant une synthèse** | Réponse IA trop longue ou flux réseau interrompu. | Toucher immédiatement le bouton rouge **`STOP`** pour forcer l'interruption. |
+| **Erreur de compilation PlatformIO sur `secrets.h`** | Fichier `secrets.h` non créé. | Dupliquer `include/secrets.example.h` vers `include/secrets.h`. |
+
+---
+
+## 9. Documentation détaillée
+
+Pour approfondir l'architecture et les spécifications techniques de VoiceJournal v0.2.1 :
+- **Guide Utilisateur complet** : [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+- **Architecture logicielle et flux de données** : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- **Guide du moteur de parsing contextuel** : [`docs/PARSER_GUIDE.md`](docs/PARSER_GUIDE.md)
+- **Protocole série JSON unifié** : [`docs/SERIAL_PARSER_PROTOCOL.md`](docs/SERIAL_PARSER_PROTOCOL.md)
+- **Procédure de validation matérielle sur CoreS3** : [`docs/HARDWARE_VALIDATION.md`](docs/HARDWARE_VALIDATION.md)
+- **Rapport de consolidation v0.2.1** : [`docs/CONSOLIDATION_REPORT_v0.2.1.md`](docs/CONSOLIDATION_REPORT_v0.2.1.md)
+- **Feuille de route v0.3.0+** : [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- **Archives des versions antérieures** : [`docs/archive/`](docs/archive/)
+
+---
+
+## 10. Licence
+
+Ce projet est sous licence **MIT**. Voir le fichier [`LICENSE`](LICENSE) pour plus de détails.  
+La bibliothèque externe **VoiceKit** est également sous licence **MIT** ([calmtechnology-ch/VoiceKit](https://github.com/calmtechnology-ch/VoiceKit)).
