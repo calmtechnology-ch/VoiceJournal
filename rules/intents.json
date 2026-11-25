@@ -1,0 +1,231 @@
+{
+  "intents": [
+    {
+      "id": "ADD_NOTE",
+      "executable": true,
+      "description": "Ajoute une observation dans le carnet",
+      "rules": [
+        {
+          "name": "prefix_add",
+          "starts_with_concepts": ["ADD"],
+          "requires_payload": true,
+          "min_payload_words": 1,
+          "base_score": 95
+        }
+      ]
+    },
+    {
+      "id": "READ_LAST_NOTE",
+      "executable": true,
+      "description": "Relit la derniere observation enregistree",
+      "rules": [
+        {
+          "name": "read_last_note",
+          "required_concepts": ["READ"],
+          "optional_concepts": ["NOTE_TARGET"],
+          "forbidden_concepts": ["DELETE", "TASK", "PROBLEM"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "COUNT_NOTES",
+      "executable": true,
+      "description": "Compte le nombre d observations",
+      "rules": [
+        {
+          "name": "count_notes",
+          "required_concepts": ["COUNT"],
+          "optional_concepts": ["NOTE_TARGET"],
+          "forbidden_concepts": ["DELETE", "TASK"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "ANALYZE_NOTES",
+      "executable": true,
+      "description": "Genere une synthese / bilan global des observations",
+      "rules": [
+        {
+          "name": "analyze_all_notes",
+          "required_concepts": ["ANALYZE"],
+          "optional_concepts": ["NOTE_TARGET"],
+          "forbidden_concepts": ["DELETE", "TASK"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "REQUEST_CLEAR",
+      "executable": true,
+      "description": "Demande d effacement de toutes les observations avec confirmation requise",
+      "rules": [
+        {
+          "name": "request_clear",
+          "required_concepts": ["DELETE"],
+          "optional_concepts": ["NOTE_TARGET"],
+          "forbidden_concepts": ["CONFIRM", "CANCEL"],
+          "must_not_have_negation": true,
+          "base_score": 95
+        }
+      ]
+    },
+    {
+      "id": "CONFIRM_CLEAR",
+      "executable": true,
+      "description": "Confirmation explicite d effacement",
+      "rules": [
+        {
+          "name": "confirm_clear_exact",
+          "exact_phrases": [
+            "oui efface",
+            "oui supprime",
+            "confirmer",
+            "confirme",
+            "confirmez",
+            "je confirme",
+            "confirmer la suppression",
+            "confirmer la suppression de toutes les notes",
+            "confirmer la suppression des notes",
+            "confirmez la suppression",
+            "confirme la suppression",
+            "je confirme la suppression",
+            "oui confirmer la suppression",
+            "oui confirmez la suppression",
+            "oui confirme la suppression",
+            "oui je confirme la suppression",
+            "oui je confirme",
+            "oui confirmer",
+            "oui confirmez",
+            "oui confirme",
+            "supprimer definitivement",
+            "effacer definitivement",
+            "valider la suppression",
+            "valide la suppression"
+          ],
+          "must_not_have_negation": true,
+          "base_score": 100
+        }
+      ]
+    },
+    {
+      "id": "CANCEL_CLEAR",
+      "executable": true,
+      "description": "Annulation de la demande d effacement",
+      "rules": [
+        {
+          "name": "cancel_clear_direct",
+          "required_concepts": ["CANCEL"],
+          "base_score": 95
+        },
+        {
+          "name": "cancel_clear_negated_delete",
+          "required_concepts": ["DELETE"],
+          "must_have_negation": true,
+          "base_score": 95
+        }
+      ]
+    },
+    {
+      "id": "HELP",
+      "executable": true,
+      "description": "Demande d aide ou liste des commandes",
+      "rules": [
+        {
+          "name": "help_direct",
+          "required_concepts": ["HELP"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "SEARCH_NOTES",
+      "executable": false,
+      "description": "Recherche parmi les observations existantes (experimental)",
+      "rules": [
+        {
+          "name": "search_notes_general",
+          "required_concepts": ["SEARCH"],
+          "optional_concepts": ["NOTE_TARGET", "PROBLEM"],
+          "base_score": 85
+        }
+      ]
+    },
+    {
+      "id": "ADD_TASK",
+      "executable": false,
+      "description": "Ajout d une tache a faire (experimental)",
+      "rules": [
+        {
+          "name": "add_task_rule",
+          "required_concepts": ["TASK"],
+          "base_score": 85
+        }
+      ]
+    },
+    {
+      "id": "RESOLVE_PROBLEM",
+      "executable": false,
+      "description": "Marquer un probleme comme resolu (experimental)",
+      "rules": [
+        {
+          "name": "resolve_problem_rule",
+          "required_concepts": ["RESOLVED"],
+          "optional_concepts": ["PROBLEM"],
+          "base_score": 85
+        }
+      ]
+    },
+    {
+      "id": "LIST_TASKS",
+      "executable": false,
+      "description": "Lister les taches en cours (experimental)",
+      "rules": [
+        {
+          "name": "list_tasks_rule",
+          "required_concepts": ["READ", "TASK"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "SEARCH_BY_PROJECT",
+      "executable": false,
+      "description": "Recherche d observations associees a un projet (experimental)",
+      "rules": [
+        {
+          "name": "search_project_rule",
+          "required_concepts": ["SEARCH"],
+          "requires_entity": true,
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "SEARCH_BY_DATE",
+      "executable": false,
+      "description": "Recherche d observations par date relative (experimental)",
+      "rules": [
+        {
+          "name": "search_date_rule",
+          "required_concepts": ["SEARCH", "DATE_RELATIVE"],
+          "base_score": 90
+        }
+      ]
+    },
+    {
+      "id": "ANALYZE_PROJECT",
+      "executable": false,
+      "description": "Synthese ciblee sur un projet (experimental)",
+      "rules": [
+        {
+          "name": "analyze_project_rule",
+          "required_concepts": ["ANALYZE"],
+          "requires_entity": true,
+          "base_score": 95
+        }
+      ]
+    }
+  ]
+}

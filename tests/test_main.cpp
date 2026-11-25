@@ -11,6 +11,7 @@
 #include "VoiceController.h"
 #include "MockKeyValueStore.h"
 #include "MockVoiceEngine.h"
+#include "parser/test_nlu_suite.h"
 
 namespace {
 
@@ -1467,6 +1468,19 @@ int main() {
     runTest("VoiceController: confirmation suppression en majuscules et fenetre apres TTS", test_controller_clear_confirmation_uppercase_and_tts_window);
     runTest("VoiceController: formatDisplayTranscript convertit les majuscules integrales", test_controller_format_display_transcript_sentence_case);
 
-    std::printf("\nResultat : %d PASS, %d FAIL\n", g_passed, g_failed);
-    return (g_failed == 0) ? 0 : 1;
+    std::printf("\nResultat v0.1.1 : %d PASS, %d FAIL\n", g_passed, g_failed);
+
+    std::printf("\n=== VoiceJournal v0.2.0 — Suite de tests NLU (200 cas de test) ===\n");
+    auto nluReport = VoiceJournal::Tests::runAllParserTests();
+    const int totalPassed = g_passed + static_cast<int>(nluReport.passed);
+    const int totalFailed = g_failed + static_cast<int>(nluReport.failed);
+
+    std::printf("\n==================================================\n");
+    std::printf("Resultat Global VoiceJournal v0.2.0 :\n");
+    std::printf("  v0.1.1 Legacy : %d PASS, %d FAIL\n", g_passed, g_failed);
+    std::printf("  v0.2.0 NLU    : %zu PASS, %zu FAIL\n", nluReport.passed, nluReport.failed);
+    std::printf("  TOTAL         : %d PASS, %d FAIL\n", totalPassed, totalFailed);
+    std::printf("==================================================\n");
+
+    return (totalFailed == 0) ? 0 : 1;
 }

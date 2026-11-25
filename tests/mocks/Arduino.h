@@ -94,6 +94,7 @@ private:
 class MockSerialClass {
 public:
     void begin(uint32_t) {}
+    void print(const char* = "") {}
     void println(const char* = "") {}
     void printf(const char* fmt, ...) {
         (void)fmt;

@@ -680,9 +680,58 @@ void VoiceController::processFinalTranscription(const String& text, uint32_t now
     CommandResult cmd = router_.route(text, nowMs);
     view_.clearConfirmPending = router_.isClearConfirmationPending(nowMs);
 
+    // Mise a jour des donnees du Parsing Lab
+    view_.labData.transcript = text;
+    view_.labData.intent = cmd.parseResult.intent;
+    view_.labData.status = cmd.parseResult.status;
+    view_.labData.score = cmd.parseResult.score;
+    view_.labData.negationDetected = cmd.parseResult.negationDetected;
+    view_.labData.fuzzyMatchUsed = cmd.parseResult.fuzzyMatchUsed;
+    view_.labData.executable = cmd.parseResult.executable;
+    view_.labData.durationUs = cmd.parseResult.processingTimeUs;
+    view_.labData.isShadowMode = (router_.getParserMode() == ParserMode::SHADOW);
+    view_.labData.legacyIntentStr = commandTypeToString(cmd.legacyType);
+    view_.labData.intelligentIntentStr = VoiceJournal::Parser::intentToString(cmd.parseResult.intent);
+    view_.labData.comparisonStr = cmd.comparisonStatus;
+    view_.labData.blockedByDivergence = cmd.blockedByDivergence;
+
+    if (cmd.blockedByDivergence) {
+        view_.labData.actionStatus = "BLOQUEE (DIVERGENCE)";
+    } else if (cmd.type == CommandType::EXPERIMENTAL) {
+        view_.labData.actionStatus = "REFUSEE (NON DISPONIBLE)";
+    } else if (cmd.type == CommandType::UNKNOWN) {
+        view_.labData.actionStatus = "NON RECONNUE";
+    } else {
+        view_.labData.actionStatus = "AUTORISEE";
+    }
+
+    if (!cmd.parseResult.entities.empty()) {
+        view_.labData.entity = String(cmd.parseResult.entities[0].canonical.c_str());
+    } else {
+        view_.labData.entity = "";
+    }
+
+    String conceptsStr;
+    for (size_t i = 0; i < cmd.parseResult.primaryConcepts.size(); ++i) {
+        if (i > 0) conceptsStr += ", ";
+        conceptsStr += VoiceJournal::Parser::conceptToString(cmd.parseResult.primaryConcepts[i]);
+    }
+    view_.labData.primaryConcepts = conceptsStr;
+
+    router_.logDiagnostics(cmd, AppConfig::LOG_PRIVATE_PAYLOAD);
+
     Serial.printf("[VJ][COMMAND] %s (norm='%s')\n",
                   commandTypeToString(cmd.type),
                   cmd.normalizedInput.c_str());
+
+    if (cmd.blockedByDivergence) {
+        setStatusMessage("Action bloquee : divergence en mode ombre.");
+        setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+        enqueueSpeech("Action destructive bloquee en raison d'une divergence.");
+        publishView();
+        return;
+    }
+
     executeCommand(cmd, nowMs);
 }
 
@@ -816,6 +865,20 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
             break;
         }
 
+        case CommandType::HELP: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            setStatusMessage("Aide : note, bilan, lire, effacer");
+            enqueueSpeech("Voici les commandes : note pour enregistrer, lis la derniere note, combien de notes, fais le bilan, ou efface les notes.");
+            break;
+        }
+
+        case CommandType::EXPERIMENTAL: {
+            setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
+            setStatusMessage("Demande comprise mais non disponible.");
+            enqueueSpeech("La demande est comprise, mais cette fonction n'est pas encore disponible.");
+            break;
+        }
+
         case CommandType::UNKNOWN:
         default: {
             setState(engine_.isReady() ? JournalState::READY : JournalState::DISCONNECTED);
@@ -824,6 +887,17 @@ void VoiceController::executeCommand(const CommandResult& cmd, uint32_t nowMs) {
             break;
         }
     }
+}
+
+void VoiceController::toggleLabView() {
+    view_.labViewActive = !view_.labViewActive;
+    publishView();
+}
+
+void VoiceController::setParserMode(ParserMode mode) {
+    router_.setParserMode(mode);
+    view_.parserMode = mode;
+    publishView();
 }
 
 bool VoiceController::enqueueSpeech(const String& text) {

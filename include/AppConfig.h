@@ -7,8 +7,8 @@ namespace AppConfig {
 
 // Identite applicative
 static constexpr const char* APP_NAME    = "VoiceJournal";
-static constexpr const char* APP_VERSION = "0.1.1";
-static constexpr const char* APP_TITLE   = "VoiceJournal v0.1.1";
+static constexpr const char* APP_VERSION = "0.2.0";
+static constexpr const char* APP_TITLE   = "VoiceJournal v0.2.0";
 
 // Stockage local NVS (tampon circulaire)
 static constexpr const char* NVS_NAMESPACE  = "vjournal";
@@ -106,6 +106,24 @@ inline constexpr const char* defaultVoiceForProvider(AiProvider provider) {
     }
 }
 
+/**
+ * @brief Mode de fonctionnement du moteur de comprehension du langage naturel.
+ */
+enum class ParserMode : uint8_t {
+    LEGACY = 0,      ///< Moteur historique v0.1.1 securise
+    INTELLIGENT = 1, ///< Nouveau moteur NLU v0.2.0 deterministe
+    SHADOW = 2       ///< Mode ombre : comparaison des deux moteurs
+};
+
+inline const char* parserModeToLabel(ParserMode mode) {
+    switch (mode) {
+        case ParserMode::LEGACY:      return "LEGACY";
+        case ParserMode::INTELLIGENT: return "INTELLIGENT";
+        case ParserMode::SHADOW:      return "SHADOW";
+        default:                      return "INTELLIGENT";
+    }
+}
+
 namespace AppConfig {
 // Fournisseur IA utilise au demarrage
 // Valeurs : AiProvider::OPENAI ou AiProvider::GEMINI
@@ -114,6 +132,14 @@ static constexpr AiProvider DEFAULT_AI_PROVIDER =
 
 static constexpr const char* VOICE_NAME =
     defaultVoiceForProvider(DEFAULT_AI_PROVIDER);
+
+// Mode du moteur de parsing au demarrage
+// Valeurs : ParserMode::LEGACY, ParserMode::INTELLIGENT ou ParserMode::SHADOW
+static constexpr ParserMode DEFAULT_PARSER_MODE =
+    ParserMode::INTELLIGENT;
+
+// Option permettant de masquer le contenu des observations privees dans les traces serie
+static constexpr bool LOG_PRIVATE_PAYLOAD = false;
 } // namespace AppConfig
 
 /**

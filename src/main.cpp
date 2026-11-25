@@ -166,6 +166,8 @@ void loop() {
         s_controller.onTalkButtonPressed(nowMs);
     } else if (action == TouchAction::SWITCH_PROVIDER) {
         s_controller.onSwitchProviderRequested(nowMs);
+    } else if (action == TouchAction::TOGGLE_LAB) {
+        s_controller.toggleLabView();
     }
 
     // 4. Rafraichissement graphique conditionnel

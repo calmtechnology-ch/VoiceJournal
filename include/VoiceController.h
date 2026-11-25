@@ -201,16 +201,42 @@ private:
 #endif
 
 /**
+ * @brief Données détaillées pour la page de diagnostic Parsing Lab.
+ */
+struct ParsingLabData {
+    VoiceJournal::Parser::IntentId intent = VoiceJournal::Parser::IntentId::UNKNOWN;
+    VoiceJournal::Parser::ParseStatus status = VoiceJournal::Parser::ParseStatus::UNRECOGNIZED;
+    uint8_t score = 0;
+    bool negationDetected = false;
+    bool fuzzyMatchUsed = false;
+    bool executable = false;
+    uint32_t durationUs = 0;
+    String transcript;
+    String primaryConcepts;
+    String entity;
+    String actionStatus;
+    // Données du mode SHADOW
+    String legacyIntentStr;
+    String intelligentIntentStr;
+    String comparisonStr;
+    bool isShadowMode = false;
+    bool blockedByDivergence = false;
+};
+
+/**
  * @brief Instantane d'etat publie par VoiceController vers l'interface utilisateur.
  */
 struct JournalViewModel {
     JournalState state = JournalState::INITIALIZING;
     AiProvider provider = AppConfig::DEFAULT_AI_PROVIDER;
+    ParserMode parserMode = AppConfig::DEFAULT_PARSER_MODE;
     size_t noteCount = 0;
     String lastTranscript;
     String statusMessage;
     bool connected = false;
     bool clearConfirmPending = false;
+    bool labViewActive = false;
+    ParsingLabData labData;
 };
 
 /**
@@ -286,6 +312,18 @@ public:
     JournalState getState() const { return state_; }
     AiProvider getProvider() const { return view_.provider; }
     const JournalViewModel& getViewModel() const { return view_; }
+
+    /**
+     * @brief Bascule l'affichage entre l'ecran principal et le Parsing Lab.
+     */
+    void toggleLabView();
+    bool isLabViewActive() const { return view_.labViewActive; }
+
+    /**
+     * @brief Configure le mode de parsing actif (LEGACY, INTELLIGENT, SHADOW).
+     */
+    void setParserMode(ParserMode mode);
+    ParserMode getParserMode() const { return router_.getParserMode(); }
 
     /**
      * @brief Construit la requete d'analyse IA bornee avec separation donnees/instructions.

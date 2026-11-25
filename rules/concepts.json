@@ -1,0 +1,66 @@
+{
+  "concepts": {
+    "ADD": [
+      "note", "noter", "notez", "notes", "notee", "memorise", "memoriser", "enregistre", "enregistrer",
+      "retiens", "retenir", "ajoute", "ajouter", "ecris", "ecrire",
+      "consigne", "consigner", "inscrire", "nouveau", "nouvelle"
+    ],
+    "SEARCH": [
+      "cherche", "chercher", "retrouve", "retrouver", "trouve", "trouver",
+      "rappelle", "rappeler", "recherche", "rechercher"
+    ],
+    "READ": [
+      "lis", "lire", "relis", "relire", "ecoute", "ecouter",
+      "derniere", "dernier", "precedente", "precedent"
+    ],
+    "COUNT": [
+      "combien", "nombre", "total", "quantite", "compte", "compter"
+    ],
+    "ANALYZE": [
+      "bilan", "synthese", "resume", "resumer", "analyse", "analyser",
+      "recapitulatif", "recap", "synthetise", "synthetiser", "observe", "observer"
+    ],
+    "DELETE": [
+      "efface", "effacer", "effacez", "supprime", "supprimer", "supprimez", "vide", "vider", "videz",
+      "purge", "purger", "purgez", "reinitialise", "reinitialiser", "reinitialisez", "raz"
+    ],
+    "CONFIRM": [
+      "confirme", "confirmer", "confirmation", "valide", "valider",
+      "validation", "oui", "absolument", "definitivement", "certainement"
+    ],
+    "CANCEL": [
+      "annule", "annuler", "annulez", "annulation", "laisse", "tomber",
+      "abandonne", "abandonner", "abandonnez", "arrete", "arreter", "arretez", "non"
+    ],
+    "HELP": [
+      "aide", "aider", "secours", "commandes", "fonctionnement",
+      "options", "manuel", "guide"
+    ],
+    "PROBLEM": [
+      "probleme", "problemes", "bug", "bugs", "erreur", "erreurs", "panne", "pannes",
+      "defaut", "defauts", "anomalie", "anomalies", "dysfonctionnement", "dysfonctionnements",
+      "echec", "echecs", "crash", "incident", "incidents", "souci", "soucis"
+    ],
+    "TASK": [
+      "tache", "taches", "todo", "action", "actions", "prevoir", "planifier",
+      "faire", "devoir", "doit", "dois"
+    ],
+    "RESOLVED": [
+      "corrige", "corriger", "resolu", "resoudre", "repare", "reparer",
+      "fixe", "fixer", "regle", "regler", "resolue", "reparee", "corrigee"
+    ],
+    "DATE_RELATIVE": [
+      "aujourd hui", "hier", "demain", "maintenant",
+      "ce matin", "ce soir", "apres demain", "avant hier"
+    ],
+    "PROJECT": [
+      "projet", "systeme", "module", "composant", "cible"
+    ],
+    "NOTE_TARGET": [
+      "note", "notes", "observation", "observations", "carnet", "journal", "entree", "entrees"
+    ],
+    "NEGATION": [
+      "ne", "n", "pas", "plus", "jamais", "rien", "aucun", "aucune", "point", "guere"
+    ]
+  }
+}

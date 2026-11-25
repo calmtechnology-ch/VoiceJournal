@@ -3,8 +3,8 @@
 #include <cctype>
 #include <cstring>
 
-CommandRouter::CommandRouter(uint32_t clearConfirmTimeoutMs)
-    : clearConfirmTimeoutMs_(clearConfirmTimeoutMs) {}
+CommandRouter::CommandRouter(uint32_t clearConfirmTimeoutMs, ParserMode mode)
+    : clearConfirmTimeoutMs_(clearConfirmTimeoutMs), mode_(mode) {}
 
 void CommandRouter::armClearConfirmation(uint32_t nowMs) {
     clearPending_ = true;
@@ -22,7 +22,6 @@ bool CommandRouter::isClearConfirmationPending(uint32_t nowMs) const {
     }
     const int32_t diff = static_cast<int32_t>(nowMs - clearArmedAtMs_);
     if (diff < 0) {
-        // Horodatage futur ou legere avance de millis() dans un callback : non expire
         return true;
     }
     return static_cast<uint32_t>(diff) <= clearConfirmTimeoutMs_;
@@ -34,7 +33,6 @@ bool CommandRouter::checkClearConfirmationTimeout(uint32_t nowMs) {
     }
     const int32_t diff = static_cast<int32_t>(nowMs - clearArmedAtMs_);
     if (diff < 0) {
-        // Horodatage futur ou legere avance de millis() : ne pas expirer
         return false;
     }
     if (static_cast<uint32_t>(diff) > clearConfirmTimeoutMs_) {
@@ -51,7 +49,7 @@ String CommandRouter::normalizeText(const String& input) {
 
     const char* s = input.c_str();
     const size_t len = input.length();
-    bool lastWasSpace = true; // Supprimer les espaces en debut de chaine
+    bool lastWasSpace = true;
 
     auto appendChar = [&](char c) {
         if (c == ' ') {
@@ -69,80 +67,64 @@ String CommandRouter::normalizeText(const String& input) {
     while (i < len) {
         const uint8_t b0 = static_cast<uint8_t>(s[i]);
 
-        // ASCII standard
         if (b0 < 0x80u) {
             if (b0 >= 'A' && b0 <= 'Z') {
                 appendChar(static_cast<char>(b0 - 'A' + 'a'));
             } else if ((b0 >= 'a' && b0 <= 'z') || (b0 >= '0' && b0 <= '9')) {
                 appendChar(static_cast<char>(b0));
             } else {
-                // Ponctuation, apostrophe, tiret, espace, etc. -> espace
                 appendChar(' ');
             }
             ++i;
             continue;
         }
 
-        // Sequences UTF-8 sur 2 octets (Latin-1 Supplement & Latin Extended-A)
         if ((b0 == 0xC3u || b0 == 0xC5u || b0 == 0xC2u) && (i + 1) < len) {
             const uint8_t b1 = static_cast<uint8_t>(s[i + 1]);
             if (b0 == 0xC3u) {
                 switch (b1) {
-                    // A / a avec accents : À Á Â Ã Ä Å (80..85), à á â ã ä å (A0..A5)
                     case 0x80: case 0x81: case 0x82: case 0x83: case 0x84: case 0x85:
                     case 0xA0: case 0xA1: case 0xA2: case 0xA3: case 0xA4: case 0xA5:
                         appendChar('a'); break;
-                    // Æ / æ
                     case 0x86: case 0xA6:
                         appendChar('a'); appendChar('e'); break;
-                    // Ç / ç
                     case 0x87: case 0xA7:
                         appendChar('c'); break;
-                    // È É Ê Ë (88..8B), è é ê ë (A8..AB)
                     case 0x88: case 0x89: case 0x8A: case 0x8B:
                     case 0xA8: case 0xA9: case 0xAA: case 0xAB:
                         appendChar('e'); break;
-                    // Ì Í Î Ï (8C..8F), ì í î ï (AC..AF)
                     case 0x8C: case 0x8D: case 0x8E: case 0x8F:
                     case 0xAC: case 0xAD: case 0xAE: case 0xAF:
                         appendChar('i'); break;
-                    // Ñ / ñ
                     case 0x91: case 0xB1:
                         appendChar('n'); break;
-                    // Ò Ó Ô Õ Ö (92..96), ò ó ô õ ö (B2..B6)
                     case 0x92: case 0x93: case 0x94: case 0x95: case 0x96:
                     case 0xB2: case 0xB3: case 0xB4: case 0xB5: case 0xB6:
                         appendChar('o'); break;
-                    // Ù Ú Û Ü (99..9C), ù ú û ü (B9..BC)
                     case 0x99: case 0x9A: case 0x9B: case 0x9C:
                     case 0xB9: case 0xBA: case 0xBB: case 0xBC:
                         appendChar('u'); break;
-                    // Ý / ý / ÿ
                     case 0x9D: case 0xBD: case 0xBF:
                         appendChar('y'); break;
                     default:
                         appendChar(' '); break;
                 }
             } else if (b0 == 0xC5u && (b1 == 0x92u || b1 == 0x93u)) {
-                // Œ / œ
                 appendChar('o');
                 appendChar('e');
             } else {
-                // Guillemets « » (C2 AB / C2 BB), espace insecable (C2 A0), etc.
                 appendChar(' ');
             }
             i += 2;
             continue;
         }
 
-        // Sequences UTF-8 sur 3 octets (ex: apostrophe typographique ’ E2 80 99, tirets)
         if ((b0 & 0xF0u) == 0xE0u && (i + 2) < len) {
             appendChar(' ');
             i += 3;
             continue;
         }
 
-        // Sequences UTF-8 sur 4 octets
         if ((b0 & 0xF8u) == 0xF0u && (i + 3) < len) {
             appendChar(' ');
             i += 4;
@@ -162,7 +144,6 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
     const size_t len = rawText.length();
     size_t i = 0;
 
-    // Ignorer espaces et guillemets/ponctuation d'ouverture en debut de chaine
     while (i < len) {
         const uint8_t c = static_cast<uint8_t>(s[i]);
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '"' || c == '\'') {
@@ -175,8 +156,6 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
         }
     }
 
-    // Verifier le prefixe explicite "note" et ses variantes STT francaises
-    // frequentes ("note", "notes", "notez", "noter", "note" accentue)
     auto toLowerAscii = [](char ch) -> char {
         return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
     };
@@ -193,7 +172,6 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
 
     if (toLowerAscii(s[i]) == 'e') {
         ++i;
-        // Variantes STT frequentes : "notes", "notez", "noter"
         if (i < len) {
             const char suffix = toLowerAscii(s[i]);
             if (suffix == 's' || suffix == 'z' || suffix == 'r') {
@@ -202,7 +180,6 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
         }
     } else if (static_cast<uint8_t>(s[i]) == 0xC3u && (i + 1) < len &&
                (static_cast<uint8_t>(s[i + 1]) == 0xA9u || static_cast<uint8_t>(s[i + 1]) == 0x89u)) {
-        // Variante STT "noté" / "NOTÉ" (et accord eventuel "notée" / "notés")
         i += 2;
         if (i < len && toLowerAscii(s[i]) == 'e') {
             ++i;
@@ -223,11 +200,9 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
             b0 == '.' || b0 == '-' || b0 == '\t' || b0 == '\n' || b0 == '\r') {
             return 1;
         }
-        // Espace insecable UTF-8 (U+00A0 = C2 A0)
         if (b0 == 0xC2u && (pos + 1) < len && static_cast<uint8_t>(s[pos + 1]) == 0xA0u) {
             return 2;
         }
-        // Espace fine insecable (U+202F = E2 80 AF) et tirets typographiques (U+2013 / U+2014)
         if (b0 == 0xE2u && (pos + 2) < len && static_cast<uint8_t>(s[pos + 1]) == 0x80u) {
             const uint8_t b2 = static_cast<uint8_t>(s[pos + 2]);
             if (b2 == 0xAFu || b2 == 0x93u || b2 == 0x94u) {
@@ -237,13 +212,10 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
         return 0;
     };
 
-    // Apres le prefixe, il doit y avoir fin de chaine ou un separateur explicite
     if (i < len && separatorLengthAt(i) == 0) {
-        // Ex: "notebook" ne sont PAS le prefixe "note"
         return false;
     }
 
-    // Sauter les separateurs immediatement apres le prefixe
     while (i < len) {
         const size_t sepLen = separatorLengthAt(i);
         if (sepLen > 0) {
@@ -260,7 +232,21 @@ bool CommandRouter::extractNotePayload(const String& rawText, String& outPayload
 }
 
 bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
+    // 1. Protection de sécurité absolue : refus strict en cas de présence de négation
+    if (normalized.indexOf("ne ") >= 0 ||
+        normalized.indexOf("n ") >= 0 ||
+        normalized.indexOf("pas") >= 0 ||
+        normalized.indexOf("jamais") >= 0 ||
+        normalized.indexOf("rien") >= 0 ||
+        normalized.indexOf("aucun") >= 0 ||
+        normalized.indexOf("non") >= 0) {
+        return false;
+    }
+
+    // 2. Formulations exactes explicitement autorisées
     if (normalized == "confirmer la suppression" ||
+        normalized == "confirmer la suppression de toutes les notes" ||
+        normalized == "confirmer la suppression des notes" ||
         normalized == "confirmez la suppression" ||
         normalized == "confirme la suppression" ||
         normalized == "je confirme la suppression" ||
@@ -278,26 +264,13 @@ bool CommandRouter::isExactConfirmPhrase(const String& normalized) {
         normalized == "oui confirme" ||
         normalized == "valider la suppression" ||
         normalized == "valide la suppression" ||
-        normalized == "supprimer toutes les notes" ||
-        normalized == "supprimer les notes" ||
-        normalized == "effacer toutes les notes" ||
-        normalized == "effacer les notes") {
+        normalized == "supprimer definitivement" ||
+        normalized == "effacer definitivement" ||
+        normalized == "oui supprime" ||
+        normalized == "oui efface") {
         return true;
     }
-    // Toute phrase contenant "confirm" et un mot cible ("suppress", "note", "tout", "effac")
-    if (normalized.indexOf("confirm") >= 0) {
-        if (normalized.indexOf("suppress") >= 0 ||
-            normalized.indexOf("note") >= 0 ||
-            normalized.indexOf("tout") >= 0 ||
-            normalized.indexOf("effac") >= 0) {
-            return true;
-        }
-    }
-    // Formules de suppression globale explicite
-    if ((normalized.indexOf("supprim") >= 0 || normalized.indexOf("effac") >= 0) &&
-        (normalized.indexOf("tout") >= 0 || normalized.indexOf("note") >= 0)) {
-        return true;
-    }
+
     return false;
 }
 
@@ -310,10 +283,17 @@ bool CommandRouter::isCancelPhrase(const String& normalized) {
            normalized == "annule la suppression" ||
            normalized == "non" ||
            normalized == "non annuler" ||
-           normalized == "stop";
+           normalized == "stop" ||
+           normalized == "laisse tomber" ||
+           normalized == "ne supprime pas" ||
+           normalized == "ne supprime rien" ||
+           normalized == "n efface pas" ||
+           normalized == "n efface rien" ||
+           normalized == "ne rien faire" ||
+           normalized == "ne fais rien";
 }
 
-CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
+CommandResult CommandRouter::routeLegacy(const String& rawText, uint32_t nowMs) {
     CommandResult res;
     res.normalizedInput = normalizeText(rawText);
 
@@ -322,10 +302,8 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
         return res;
     }
 
-    // 1. Verifier si une confirmation de suppression est en attente
     const bool pendingClear = isClearConfirmationPending(nowMs);
     if (clearPending_ && !pendingClear) {
-        // Expiration silencieuse
         clearPending_ = false;
         clearArmedAtMs_ = 0;
     }
@@ -343,16 +321,14 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
             res.type = CommandType::CANCEL_CLEAR;
             return res;
         }
-        // Toute autre phrase invalide la confirmation en attente (securite stricte)
+        // Toute autre phrase (ou négation) invalide la confirmation
         clearPending_ = false;
         clearArmedAtMs_ = 0;
     }
 
-    // 2. Commande "Note, <observation>" (uniquement comme prefixe explicite)
     String notePayload;
     if (extractNotePayload(rawText, notePayload)) {
         if (notePayload.length() == 0) {
-            // Observation vide refusee
             res.type = CommandType::NONE;
             return res;
         }
@@ -363,7 +339,6 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
 
     const String& n = res.normalizedInput;
 
-    // 3. Lire la derniere note
     if (n == "lis la derniere note" ||
         n == "lire la derniere note" ||
         n == "relis la derniere note" ||
@@ -375,7 +350,6 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
         return res;
     }
 
-    // 4. Nombre de notes
     if (n == "combien de notes" ||
         n == "combien de note" ||
         n == "combien y a t il de notes" ||
@@ -386,7 +360,6 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
         return res;
     }
 
-    // 5. Analyse IA / Bilan / Synthese
     if (n == "fais le bilan" ||
         n == "faire le bilan" ||
         n == "bilan" ||
@@ -403,7 +376,6 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
         return res;
     }
 
-    // 6. Demande d'effacement de toutes les notes (confirmation obligatoire)
     if (n == "efface toutes les notes" ||
         n == "effacer toutes les notes" ||
         n == "effacez toutes les notes" ||
@@ -423,7 +395,215 @@ CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
         return res;
     }
 
-    // 7. Commande non reconnue
+    if (n == "aide" || n == "aide moi" || n == "commandes") {
+        res.type = CommandType::HELP;
+        return res;
+    }
+
     res.type = CommandType::UNKNOWN;
     return res;
+}
+
+CommandResult CommandRouter::routeIntelligent(const String& rawText, uint32_t nowMs) {
+    CommandResult res;
+    const bool pendingClear = isClearConfirmationPending(nowMs);
+    if (clearPending_ && !pendingClear) {
+        clearPending_ = false;
+        clearArmedAtMs_ = 0;
+    }
+
+    const std::string textStd(rawText.c_str());
+    res.parseResult = parser_.parse(textStd, pendingClear);
+    res.normalizedInput = String(res.parseResult.normalizedText.c_str());
+
+    using namespace VoiceJournal::Parser;
+
+    switch (res.parseResult.intent) {
+        case IntentId::ADD_NOTE:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            if (res.parseResult.observationPayload.empty()) {
+                res.type = CommandType::NONE;
+            } else {
+                res.type = CommandType::ADD_NOTE;
+                res.payload = String(res.parseResult.observationPayload.c_str());
+            }
+            break;
+
+        case IntentId::READ_LAST_NOTE:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::READ_LAST_NOTE;
+            break;
+
+        case IntentId::COUNT_NOTES:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::COUNT_NOTES;
+            break;
+
+        case IntentId::ANALYZE_NOTES:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::ANALYZE_NOTES;
+            break;
+
+        case IntentId::REQUEST_CLEAR:
+            // Ne pas confirmer automatiquement si déjà en attente
+            res.type = CommandType::REQUEST_CLEAR;
+            break;
+
+        case IntentId::CONFIRM_CLEAR:
+            if (pendingClear && !res.parseResult.negationDetected) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+                res.type = CommandType::CONFIRM_CLEAR;
+            } else {
+                res.type = CommandType::UNKNOWN;
+            }
+            break;
+
+        case IntentId::CANCEL_CLEAR:
+            clearPending_ = false;
+            clearArmedAtMs_ = 0;
+            res.type = CommandType::CANCEL_CLEAR;
+            break;
+
+        case IntentId::HELP:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::HELP;
+            break;
+
+        case IntentId::SEARCH_NOTES:
+        case IntentId::ADD_TASK:
+        case IntentId::RESOLVE_PROBLEM:
+        case IntentId::LIST_TASKS:
+        case IntentId::SEARCH_BY_PROJECT:
+        case IntentId::SEARCH_BY_DATE:
+        case IntentId::ANALYZE_PROJECT:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::EXPERIMENTAL;
+            break;
+
+        case IntentId::NO_ACTION:
+            res.type = CommandType::NONE;
+            break;
+
+        case IntentId::UNKNOWN:
+        case IntentId::AMBIGUOUS:
+        default:
+            if (pendingClear) {
+                clearPending_ = false;
+                clearArmedAtMs_ = 0;
+            }
+            res.type = CommandType::UNKNOWN;
+            break;
+    }
+
+    return res;
+}
+
+CommandResult CommandRouter::routeShadow(const String& rawText, uint32_t nowMs) {
+    const bool savedClearPending = clearPending_;
+    const uint32_t savedClearArmedAtMs = clearArmedAtMs_;
+
+    // 1. Analyse avec le moteur historique
+    CommandResult legacyRes = routeLegacy(rawText, nowMs);
+
+    // 2. Restaurer l'état de confirmation pour une analyse équitable
+    clearPending_ = savedClearPending;
+    clearArmedAtMs_ = savedClearArmedAtMs;
+
+    // 3. Analyse avec le moteur intelligent
+    CommandResult intelRes = routeIntelligent(rawText, nowMs);
+
+    CommandResult res = legacyRes;
+    res.legacyType = legacyRes.type;
+    res.parseResult = intelRes.parseResult;
+
+    // 4. Comparaison
+    if (legacyRes.type == intelRes.type) {
+        res.comparisonStatus = "MATCH";
+    } else if (legacyRes.type == CommandType::UNKNOWN && intelRes.type == CommandType::EXPERIMENTAL) {
+        res.comparisonStatus = "NEW_INTENT";
+    } else if (legacyRes.type == CommandType::UNKNOWN && intelRes.type != CommandType::UNKNOWN) {
+        res.comparisonStatus = "NEW_INTENT";
+    } else {
+        res.comparisonStatus = "DIVERGENCE";
+    }
+
+    // 5. Règle de sécurité non négociable : blocage de toute action destructive en cas de divergence
+    const bool legacyDestructive = (legacyRes.type == CommandType::CONFIRM_CLEAR || legacyRes.type == CommandType::REQUEST_CLEAR);
+    const bool intelDestructive = (intelRes.type == CommandType::CONFIRM_CLEAR || intelRes.type == CommandType::REQUEST_CLEAR);
+
+    if (res.comparisonStatus == "DIVERGENCE" && (legacyDestructive || intelDestructive)) {
+        res.type = CommandType::UNKNOWN;
+        res.blockedByDivergence = true;
+        res.comparisonStatus = "SECURITY_BLOCKED";
+        cancelClearConfirmation();
+    }
+
+    return res;
+}
+
+CommandResult CommandRouter::route(const String& rawText, uint32_t nowMs) {
+    switch (mode_) {
+        case ParserMode::LEGACY:
+            return routeLegacy(rawText, nowMs);
+        case ParserMode::INTELLIGENT:
+            return routeIntelligent(rawText, nowMs);
+        case ParserMode::SHADOW:
+            return routeShadow(rawText, nowMs);
+        default:
+            return routeIntelligent(rawText, nowMs);
+    }
+}
+
+void CommandRouter::logDiagnostics(const CommandResult& res, bool maskPrivatePayload) const {
+    const auto& pr = res.parseResult;
+    String displayInput = (maskPrivatePayload && res.type == CommandType::ADD_NOTE)
+        ? "<OBSERVATION_PRIVEE>"
+        : String(pr.originalText.c_str());
+
+    Serial.printf("[VJ][PARSER] Input: %s\n", displayInput.c_str());
+    Serial.printf("[VJ][PARSER] Tokens: %u\n", static_cast<unsigned int>(pr.tokens.size()));
+    Serial.printf("[VJ][PARSER] Intent: %s\n", VoiceJournal::Parser::intentToString(pr.intent));
+
+    std::string conceptsStr;
+    if (pr.primaryConcepts.empty()) {
+        conceptsStr = "NONE";
+    } else {
+        for (size_t i = 0; i < pr.primaryConcepts.size(); ++i) {
+            if (i > 0) conceptsStr += ", ";
+            conceptsStr += VoiceJournal::Parser::conceptToString(pr.primaryConcepts[i]);
+        }
+    }
+    Serial.printf("[VJ][PARSER] Concepts: %s\n", conceptsStr.c_str());
+
+    if (!pr.entities.empty()) {
+        Serial.printf("[VJ][PARSER] Entity: %s\n", pr.entities[0].canonical.c_str());
+    }
+
+    Serial.printf("[VJ][PARSER] Score: %u\n", static_cast<unsigned int>(pr.score));
+    Serial.printf("[VJ][PARSER] Negation: %s\n", pr.negationDetected ? "true" : "false");
+    Serial.printf("[VJ][PARSER] Executable: %s\n", pr.executable ? "true" : "false");
+
+    if (mode_ == ParserMode::SHADOW) {
+        Serial.printf("[VJ][PARSER] Legacy: %s\n", commandTypeToString(res.legacyType));
+        Serial.printf("[VJ][PARSER] Comparison: %s\n", res.comparisonStatus.c_str());
+    }
 }

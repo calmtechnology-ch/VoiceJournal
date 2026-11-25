@@ -106,6 +106,18 @@ TouchAction JournalUI::processTouchSample(const TouchSample& sample, uint32_t no
         return TouchAction::SWITCH_PROVIDER;
     }
 
+    // 6. Bouton [LAB] ou [RETOUR] pour basculer la vue Parsing Lab :
+    if (view_.labViewActive) {
+        if (isInsideRect(sample.x, sample.y, BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H) ||
+            isInsideRect(sample.x, sample.y, BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H)) {
+            return TouchAction::TOGGLE_LAB;
+        }
+    } else {
+        if (isInsideRect(sample.x, sample.y, BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H)) {
+            return TouchAction::TOGGLE_LAB;
+        }
+    }
+
     return TouchAction::NONE;
 }
 
@@ -268,6 +280,18 @@ void JournalUI::draw() {
     M5.Display.setTextColor(TFT_WHITE, headerBg);
     M5.Display.drawString(AppConfig::APP_TITLE, 10, HEADER_H / 2);
 
+    // Bouton tactile [LAB] dans l'en-tete
+    const uint16_t labBtnBg = view_.labViewActive ? M5.Display.color565(140, 60, 200)
+                                                  : M5.Display.color565(55, 65, 85);
+    M5.Display.fillRoundRect(BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H, 4, labBtnBg);
+    M5.Display.drawRoundRect(BTN_LAB_X, BTN_LAB_Y, BTN_LAB_W, BTN_LAB_H, 4, TFT_WHITE);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(TFT_WHITE, labBtnBg);
+    M5.Display.drawString(view_.labViewActive ? "DOCS" : "LAB",
+                          BTN_LAB_X + (BTN_LAB_W / 2),
+                          BTN_LAB_Y + (BTN_LAB_H / 2));
+
     uint16_t badgeColor = TFT_DARKGRAY;
     uint16_t badgeText  = TFT_WHITE;
     switch (view_.state) {
@@ -327,69 +351,153 @@ void JournalUI::draw() {
     M5.Display.fillRoundRect(CARD_X, CARD_Y, CARD_W, CARD_H, 8, cardBg);
     M5.Display.drawRoundRect(CARD_X, CARD_Y, CARD_W, CARD_H, 8, cardBorder);
 
-    // Ligne superieure : compteur de notes (toujours visible meme hors ligne)
-    M5.Display.setTextDatum(top_left);
-    M5.Display.setTextSize(2);
-    M5.Display.setTextColor(M5.Display.color565(130, 210, 255), cardBg);
-    char noteHdr[32];
-    snprintf(noteHdr, sizeof(noteHdr), "Notes : %u / %u",
-             static_cast<unsigned>(view_.noteCount),
-             static_cast<unsigned>(AppConfig::MAX_NOTES));
-    M5.Display.drawString(noteHdr, CARD_X + 10, CARD_Y + 8);
+    if (!view_.labViewActive) {
+        // Ligne superieure : compteur de notes (toujours visible meme hors ligne)
+        M5.Display.setTextDatum(top_left);
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(M5.Display.color565(130, 210, 255), cardBg);
+        char noteHdr[32];
+        snprintf(noteHdr, sizeof(noteHdr), "Notes : %u / %u",
+                 static_cast<unsigned>(view_.noteCount),
+                 static_cast<unsigned>(AppConfig::MAX_NOTES));
+        M5.Display.drawString(noteHdr, CARD_X + 10, CARD_Y + 8);
 
-    // Selecteur tactile de fournisseur IA [OPENAI / GEMINI]
-    const bool providerSwitchEnabled = isProviderSwitchEnabled();
-    uint16_t provBg = (view_.provider == AiProvider::OPENAI)
-                          ? M5.Display.color565(16, 130, 105)
-                          : M5.Display.color565(45, 95, 195);
-    uint16_t provFg = TFT_WHITE;
-    if (!providerSwitchEnabled) {
-        provBg = M5.Display.color565(44, 52, 66);
-        provFg = M5.Display.color565(145, 155, 170);
-    }
-    M5.Display.fillRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5, provBg);
-    M5.Display.drawRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5,
-                             providerSwitchEnabled ? TFT_WHITE : cardBorder);
-    M5.Display.setTextDatum(middle_center);
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(provFg, provBg);
-    char provLabel[24];
-    snprintf(provLabel, sizeof(provLabel), "IA: %s", aiProviderToUiLabel(view_.provider));
-    M5.Display.drawString(provLabel,
-                          BTN_PROVIDER_X + (BTN_PROVIDER_W / 2),
-                          BTN_PROVIDER_Y + (BTN_PROVIDER_H / 2));
+        // Selecteur tactile de fournisseur IA [OPENAI / GEMINI]
+        const bool providerSwitchEnabled = isProviderSwitchEnabled();
+        uint16_t provBg = (view_.provider == AiProvider::OPENAI)
+                              ? M5.Display.color565(16, 130, 105)
+                              : M5.Display.color565(45, 95, 195);
+        uint16_t provFg = TFT_WHITE;
+        if (!providerSwitchEnabled) {
+            provBg = M5.Display.color565(44, 52, 66);
+            provFg = M5.Display.color565(145, 155, 170);
+        }
+        M5.Display.fillRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5, provBg);
+        M5.Display.drawRoundRect(BTN_PROVIDER_X, BTN_PROVIDER_Y, BTN_PROVIDER_W, BTN_PROVIDER_H, 5,
+                                 providerSwitchEnabled ? TFT_WHITE : cardBorder);
+        M5.Display.setTextDatum(middle_center);
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(provFg, provBg);
+        char provLabel[24];
+        snprintf(provLabel, sizeof(provLabel), "IA: %s", aiProviderToUiLabel(view_.provider));
+        M5.Display.drawString(provLabel,
+                              BTN_PROVIDER_X + (BTN_PROVIDER_W / 2),
+                              BTN_PROVIDER_Y + (BTN_PROVIDER_H / 2));
 
-    // Pastille de connectivite
-    M5.Display.setTextDatum(top_left);
-    const uint16_t netColor = view_.connected ? M5.Display.color565(40, 200, 100)
-                                              : M5.Display.color565(220, 120, 40);
-    M5.Display.fillCircle(CARD_X + CARD_W - 16, CARD_Y + 16, 5, netColor);
+        // Pastille de connectivite
+        M5.Display.setTextDatum(top_left);
+        const uint16_t netColor = view_.connected ? M5.Display.color565(40, 200, 100)
+                                                  : M5.Display.color565(220, 120, 40);
+        M5.Display.fillCircle(CARD_X + CARD_W - 16, CARD_Y + 16, 5, netColor);
 
-    M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 32, CARD_W - 16, cardBorder);
+        M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 32, CARD_W - 16, cardBorder);
 
-    // Zone transcription / synthese
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(M5.Display.color565(150, 165, 190), cardBg);
-    M5.Display.drawString("Derniere transcription :", CARD_X + 10, CARD_Y + 38);
+        // Zone transcription / synthese
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(M5.Display.color565(150, 165, 190), cardBg);
+        M5.Display.drawString("Derniere transcription :", CARD_X + 10, CARD_Y + 38);
 
-    M5.Display.setTextColor(TFT_WHITE, cardBg);
-    if (view_.lastTranscript.length() > 0) {
-        drawWrappedText(view_.lastTranscript, CARD_X + 10, CARD_Y + 52, CARD_W - 20, 4, 14);
+        M5.Display.setTextColor(TFT_WHITE, cardBg);
+        if (view_.lastTranscript.length() > 0) {
+            drawWrappedText(view_.lastTranscript, CARD_X + 10, CARD_Y + 52, CARD_W - 20, 4, 14);
+        } else {
+            M5.Display.setTextColor(M5.Display.color565(110, 125, 145), cardBg);
+            M5.Display.drawString("(Aucune dictee pour le moment)", CARD_X + 10, CARD_Y + 56);
+        }
+
+        // Ligne de statut ou d'erreur en bas de carte
+        M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + CARD_H - 26, CARD_W - 16, cardBorder);
+        uint16_t statusColor = M5.Display.color565(175, 225, 185);
+        if (view_.state == JournalState::ERROR_STATE) {
+            statusColor = M5.Display.color565(255, 110, 110);
+        } else if (view_.clearConfirmPending || view_.state == JournalState::DISCONNECTED) {
+            statusColor = M5.Display.color565(255, 205, 90);
+        }
+        M5.Display.setTextColor(statusColor, cardBg);
+        drawWrappedText(view_.statusMessage, CARD_X + 10, CARD_Y + CARD_H - 19, CARD_W - 20, 1, 12);
     } else {
-        M5.Display.setTextColor(M5.Display.color565(110, 125, 145), cardBg);
-        M5.Display.drawString("(Aucune dictee pour le moment)", CARD_X + 10, CARD_Y + 56);
-    }
+        // =========================================================================
+        // Vue PARSING LAB
+        // =========================================================================
+        M5.Display.setTextDatum(top_left);
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(M5.Display.color565(210, 140, 255), cardBg);
+        M5.Display.drawString("PARSING LAB", CARD_X + 10, CARD_Y + 10);
 
-    // Ligne de statut ou d'erreur en bas de carte
-    M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + CARD_H - 26, CARD_W - 16, cardBorder);
-    uint16_t statusColor = M5.Display.color565(175, 225, 185);
-    if (view_.state == JournalState::ERROR_STATE) {
-        statusColor = M5.Display.color565(255, 110, 110);
-    } else if (view_.clearConfirmPending || view_.state == JournalState::DISCONNECTED) {
-        statusColor = M5.Display.color565(255, 205, 90);
+        // Badge du mode de parsing [INTEL / SHADOW / LEG]
+        const char* modeBadge = parserModeToLabel(view_.parserMode);
+        uint16_t modeBg = (view_.parserMode == ParserMode::SHADOW)
+                              ? M5.Display.color565(190, 120, 20)
+                              : M5.Display.color565(40, 80, 150);
+        M5.Display.fillRoundRect(CARD_X + 90, CARD_Y + 6, 75, 18, 4, modeBg);
+        M5.Display.setTextDatum(middle_center);
+        M5.Display.setTextColor(TFT_WHITE, modeBg);
+        M5.Display.drawString(modeBadge, CARD_X + 90 + 37, CARD_Y + 15);
+
+        // Bouton [RETOUR]
+        M5.Display.fillRoundRect(BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H, 4, M5.Display.color565(60, 75, 95));
+        M5.Display.drawRoundRect(BTN_LAB_RETOUR_X, BTN_LAB_RETOUR_Y, BTN_LAB_RETOUR_W, BTN_LAB_RETOUR_H, 4, TFT_WHITE);
+        M5.Display.setTextDatum(middle_center);
+        M5.Display.drawString("RETOUR", BTN_LAB_RETOUR_X + (BTN_LAB_RETOUR_W / 2), BTN_LAB_RETOUR_Y + (BTN_LAB_RETOUR_H / 2));
+
+        M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 30, CARD_W - 16, cardBorder);
+
+        // Lignes de diagnostics
+        M5.Display.setTextDatum(top_left);
+        M5.Display.setTextSize(1);
+
+        // Ligne 1 : Transcription
+        M5.Display.setTextColor(M5.Display.color565(170, 190, 215), cardBg);
+        String txt = (view_.labData.transcript.length() > 0) ? view_.labData.transcript : String("(Aucune transcription)");
+        drawWrappedText(String("Txt: ") + txt, CARD_X + 10, CARD_Y + 34, CARD_W - 20, 1, 12);
+
+        // Ligne 2 : Intention + Score
+        M5.Display.setTextColor(M5.Display.color565(255, 220, 100), cardBg);
+        char bufIntent[64];
+        snprintf(bufIntent, sizeof(bufIntent), "Intent: %s (%u%%)",
+                 view_.labData.intelligentIntentStr.c_str(),
+                 static_cast<unsigned>(view_.labData.score));
+        M5.Display.drawString(bufIntent, CARD_X + 10, CARD_Y + 48);
+
+        // Ligne 3 : Concepts
+        M5.Display.setTextColor(M5.Display.color565(140, 225, 255), cardBg);
+        String cStr = view_.labData.primaryConcepts.length() > 0 ? view_.labData.primaryConcepts : String("NONE");
+        drawWrappedText(String("Concepts: ") + cStr, CARD_X + 10, CARD_Y + 62, CARD_W - 20, 1, 12);
+
+        // Ligne 4 : Entités, Négation, Fuzzy
+        M5.Display.setTextColor(TFT_WHITE, cardBg);
+        char bufEnt[64];
+        snprintf(bufEnt, sizeof(bufEnt), "Ent: %s | Neg: %s | Fuz: %s",
+                 view_.labData.entity.length() > 0 ? view_.labData.entity.c_str() : "-",
+                 view_.labData.negationDetected ? "OUI" : "NON",
+                 view_.labData.fuzzyMatchUsed ? "OUI" : "NON");
+        M5.Display.drawString(bufEnt, CARD_X + 10, CARD_Y + 76);
+
+        // Ligne 5 : Temps et Action
+        uint16_t actColor = view_.labData.executable ? M5.Display.color565(100, 240, 140) : M5.Display.color565(255, 140, 100);
+        M5.Display.setTextColor(actColor, cardBg);
+        char bufTps[64];
+        snprintf(bufTps, sizeof(bufTps), "Tps: %u us | Act: %s",
+                 static_cast<unsigned>(view_.labData.durationUs),
+                 view_.labData.actionStatus.c_str());
+        M5.Display.drawString(bufTps, CARD_X + 10, CARD_Y + 90);
+
+        // Lignes 6 & 7 (si mode SHADOW)
+        if (view_.labData.isShadowMode) {
+            M5.Display.drawFastHLine(CARD_X + 8, CARD_Y + 104, CARD_W - 16, cardBorder);
+            M5.Display.setTextColor(M5.Display.color565(255, 200, 120), cardBg);
+            char bufShadow1[64];
+            snprintf(bufShadow1, sizeof(bufShadow1), "LEG: %s | INT: %s",
+                     view_.labData.legacyIntentStr.c_str(),
+                     view_.labData.intelligentIntentStr.c_str());
+            M5.Display.drawString(bufShadow1, CARD_X + 10, CARD_Y + 108);
+
+            char bufShadow2[64];
+            snprintf(bufShadow2, sizeof(bufShadow2), "COMP: %s",
+                     view_.labData.comparisonStr.c_str());
+            M5.Display.drawString(bufShadow2, CARD_X + 10, CARD_Y + 122);
+        }
     }
-    M5.Display.setTextColor(statusColor, cardBg);
-    drawWrappedText(view_.statusMessage, CARD_X + 10, CARD_Y + CARD_H - 19, CARD_W - 20, 1, 12);
 
     // =========================================================================
     // 3. Zone inferieure : [ PARLER / TERMINER ] [ STOP ]

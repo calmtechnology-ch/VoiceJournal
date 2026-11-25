@@ -1,32 +1,47 @@
-# VoiceJournal v0.1.1 — Carnet de laboratoire vocal intelligent
+# VoiceJournal v0.2.0 — Carnet de laboratoire vocal intelligent & Moteur NLU Embarqué
 
 Application embarquée C++17 pour **M5Stack CoreS3 (ESP32-S3)** construite sur la façade publique **`<VoiceKit.h>`** (**VoiceKit**, révision Git vérifiée `16646c73acf01a8d57408391bc6de15a288b8910`), compatible **OpenAI Realtime** (fournisseur par défaut) et **Google Gemini Live**.
 
-Conforme au troisième article de la série VoiceKit : *« Créer une application embarquée intelligente avec VoiceKit : du premier enregistrement vocal à l'analyse par IA »*.
+La version **v0.2.0 — Intelligent Parsing Foundation** dote VoiceJournal d'un moteur de compréhension du langage naturel (**NLU**) local, déterministe, explicable et optimisé pour l'ESP32-S3, sans dépendance cloud ni modèle probabiliste lourd.
 
-> **Statut de validation :** La version **v0.1.1** intègre le support multi-fournisseurs (OpenAI Realtime par défaut + Google Gemini Live), centralise la sélection initiale du fournisseur dans `include/AppConfig.h`, valide la logique métier par **34 tests natifs C++17** et compile sans erreur avec PlatformIO (`m5stack-cores3`). **Les tests matériels sur M5Stack CoreS3 réel (`VJ-01` à `VJ-28`) restent `NOT RUN` tant qu'ils n'ont pas été exécutés sur un appareil physique.**
+> **Statut de validation :** La version **v0.2.0** valide la totalité de sa logique métier par **256 tests natifs C++17 réussis à 100%** (34 tests historiques v0.1.1 avec 36 assertions + 220 tests NLU v0.2.0) et compile avec PlatformIO (`m5stack-cores3` : RAM 26,1%, Flash 87,2%). **Les tests matériels sur M5Stack CoreS3 réel (`VJ-01` à `VJ-44`) restent `NOT RUN` tant qu'ils n'ont pas été exécutés sur un appareil physique.**
 
 ---
 
-## 1. Présentation de VoiceJournal v0.1.1
+## 1. Présentation de VoiceJournal v0.2.0
 
 **VoiceJournal** transforme un **M5Stack CoreS3** autonome (sans aucun capteur ni module externe) en carnet de laboratoire vocal. L'utilisateur dicte ses observations techniques en français, les stocke localement dans la mémoire non volatile (NVS), les relit à la voix et demande à l'IA (**OpenAI Realtime** par défaut ou **Google Gemini Live**) d'en produire une synthèse factuelle courte.
 
+En version **v0.2.0**, le moteur NLU comprend désormais la richesse du langage naturel : synonymes d'ajout (*"Mémorise"*, *"Enregistre"*, *"Retiens"*), tolérance aux fautes de transcription (Damerau-Levenshtein borné), détection sémantique des négations avec isolation du contenu dicté, gestion explicite des ambiguïtés et protection absolue contre les effacements accidentels.
+
 ---
 
-## 2. Fonctionnalités disponibles (v0.1.1)
+## 2. Fonctionnalités disponibles (v0.2.0)
 
+- **Moteur NLU local déterministe C++17 (`JournalParser`)** :
+  - Normalisation UTF-8 complète (accents français, apostrophes, élisions, ponctuation).
+  - Préservation intégrale et bijective de la charge utile originale (accents, majuscules, acronymes techniques conservés en NVS).
+  - Dictionnaire compact de 179 entrées lexicales constantes en mémoire Flash (`constexpr` / `PROGMEM`) avec masques binaires 32 bits et recherche en $O(\log N)$.
+  - Tolérance aux fautes d'inattention (Damerau-Levenshtein distance $\le 1$) avec exclusions strictes (mots courts, chiffres, versions, identifiants techniques et confirmations).
+  - Analyse fine des négations et isolation stricte du contenu de note dicté (*"Note, ne supprime pas..."* $\rightarrow$ `ADD_NOTE`).
+  - Détection déterministe d'ambiguïté entre commandes concurrentes.
+- **Trois modes de parsing configurables (`AppConfig::DEFAULT_PARSER_MODE`)** :
+  - `INTELLIGENT` (défaut) : moteur NLU v0.2.0 actif.
+  - `LEGACY` : comportement strict v0.1.1 pour compatibilité totale.
+  - `SHADOW` : exécution legacy avec analyse miroir intelligente en parallèle et verrouillage de sécurité en cas de divergence (`SECURITY_BLOCKED`).
+- **Parsing Lab sur écran tactile CoreS3** :
+  - Bouton `[LAB]` / `[RETOUR]` affichant la carte diagnostique en direct (transcription, intention, score, concepts, entités, négation, fuzzy, temps en microsecondes, comparatif Shadow).
+  - Bouton physique/tactile `STOP` rouge prioritaire maintenu en permanence.
+- **Simulateur autonome PC (`simulator/`)** :
+  - Exécutable console permettant de tester des phrases en mode REPL interactif (`--eval`, `--shadow`, `--test`).
 - **Deux fournisseurs IA compatibles** : **OpenAI Realtime** (fournisseur par défaut au démarrage, voix `alloy`) et **Google Gemini Live** (voix `Aoede`).
 - **Configuration centralisée du fournisseur initial** dans `include/AppConfig.h` via `AppConfig::DEFAULT_AI_PROVIDER`.
-- **Sélecteur tactile de fournisseur IA** (`[IA: OPENAI]` / `[IA: GEMINI]`) directement sur l'écran du CoreS3 pour basculer à chaud hors activité vocale (y compris depuis `DECONNECTE` ou `ERREUR`), sans perdre les notes NVS.
-- **Dictée d'observations techniques (STT)** en Push-to-Talk 2 clics (`PARLER` puis `TERMINER`).
-- **Stockage local persistant fiabilisé en NVS** (espace `"vjournal"`, double instantané A/B de 5 observations, 180 octets UTF-8 max chacune, marqueur de validation FNV-1a écrit en dernier, migration automatique et non destructive depuis v0.1.0).
+- **Sélecteur tactile de fournisseur IA** (`[IA: OPENAI]` / `[IA: GEMINI]`) directement sur l'écran du CoreS3 pour basculer à chaud hors activité vocale.
+- **Stockage local persistant fiabilisé en NVS** (espace `"vjournal"`, double instantané A/B de 5 observations, 180 octets UTF-8 max chacune, marqueur FNV-1a).
 - **Consultation vocale (TTS)** : relecture de la dernière note, comptage des notes.
-- **Effacement sécurisé** : suppression complète du carnet uniquement après confirmation vocale explicite dans un délai de 15 s (annulable par `STOP`).
-- **Synthèse IA à la demande** via `voice.askAi(...)` avec séparation stricte entre consignes système et données utilisateur.
-- **Interface tactile M5GFX** (paysage 320 × 240, rotation `0`, sans LVGL 9) affichant en permanence le nombre de notes, même hors ligne.
-- **Interruption immédiate `STOP` réellement prioritaire** : non bloquée par l'anti-rebond de `PARLER`, protégée contre les déclenchements multiples par maintien, coupant écoute, synthèse ou analyse IA sans jamais effacer les notes NVS ni déclencher de reconnexion inutile.
-- **Diagnostics série** structurés à 115 200 bauds (`[VJ][...]`) sans jamais exposer Wi-Fi ni clé API.
+- **Effacement sécurisé** : confirmation destructive stricte en 2 étapes avec fenêtre de 15 s, insensible aux négations trompeuses.
+- **Synthèse IA à la demande** via `voice.askAi(...)` avec séparation stricte consignes système / données utilisateur.
+- **Interruption immédiate `STOP` réellement prioritaire** dans tous les états du système.
 
 ---
 

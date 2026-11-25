@@ -2,7 +2,44 @@
 
 Toutes les évolutions notables de **VoiceJournal** sont consignées dans ce fichier.
 
-## [0.1.1] - 2026-11-23 — Multi-fournisseurs (OpenAI par défaut + Gemini) & Correctifs de configuration
+## [0.2.0] - 2026-11-25 — Intelligent Parsing Foundation
+
+### Ajouté
+- **Moteur NLU local C++17 embarqué (`JournalParser`)** :
+  - Découpage modulaire : `TextNormalizer`, `Tokenizer`, `ConceptDictionary`, `FuzzyMatcher`, `NegationDetector`, `SlotExtractor`, `IntentMatcher`, `JournalParser`.
+  - Normalisation UTF-8 avancée avec gestion exhaustive des accents français, ligatures, élisions et ponctuation.
+  - Préservation intégrale et bijective de la charge utile originale (accents, casse, ponctuation et notations techniques préservés en NVS).
+  - Dictionnaire de concepts compact en Flash (masques binaires 32 bits, recherche logarithmique en $O(\log N)$).
+  - Tolérance aux fautes d'inattention via distance Damerau-Levenshtein bornée ($d \le 1$), avec garde-fous stricts interdisant le fuzzy sur mots courts (< 4 caractères), nombres, versions logicielles, identifiants techniques et confirmations.
+  - Détection sémantique des négations avec isolation de la charge utile (ex. *"Note, ne supprime pas..."* est traité comme `ADD_NOTE`).
+  - Détection des ambiguïtés lorsque deux intentions concurrentes ont un score proche ($\Delta \le 5$).
+- **Nouvelles intentions reconnues** :
+  - Executables : `ADD_NOTE` (avec synonymes *"Mémorise"*, *"Enregistre"*, *"Retiens"*), `READ_LAST_NOTE`, `COUNT_NOTES`, `ANALYZE_NOTES`, `REQUEST_CLEAR`, `CONFIRM_CLEAR`, `CANCEL_CLEAR`, `HELP`.
+  - Expérimentales (reconnues sans altération de stockage) : `SEARCH_NOTES`, `ADD_TASK`, `RESOLVE_PROBLEM`, `LIST_TASKS`, `SEARCH_BY_PROJECT`, `SEARCH_BY_DATE`, `ANALYZE_PROJECT`.
+- **Modes de parsing configurables (`CommandRouter`)** :
+  - `ParserMode::INTELLIGENT` (défaut) : moteur NLU complet.
+  - `ParserMode::LEGACY` : comportement historique strict v0.1.1.
+  - `ParserMode::SHADOW` : exécution legacy avec analyse miroir intelligente et blocage de sécurité en cas de divergence destructive (`SECURITY_BLOCKED`).
+- **Parsing Lab sur M5Stack CoreS3 (`JournalUI`)** :
+  - Bouton tactile `[LAB]` / `[RETOUR]` permettant de basculer sur un écran de diagnostic en direct (transcription, intention, score, concepts, entités, négation, fuzzy, timing µs, shadow status).
+  - Bouton `STOP` rouge prioritaire maintenu en permanence.
+- **Simulateur autonome PC (`simulator/`)** :
+  - Exécutable autonome compilable sur PC avec options `--test`, `--eval`, `--shadow` et mode REPL interactif.
+- **Banc de tests natifs étendu** :
+  - Ajout de 220 tests NLU couvrant 11 catégories (`test_nlu_suite.cpp`).
+  - Total général de **256 tests PASS** (36 assertions v0.1.1 + 220 NLU).
+- **Documentation v0.2.0 exhaustive** :
+  - `docs/baseline/BASELINE_v0.1.1.md`
+  - `docs/PARSER_ARCHITECTURE.md`
+  - `docs/PARSER_RULES.md`
+  - `docs/PARSER_USER_GUIDE.md`
+  - `docs/REGRESSION_REPORT.md`
+  - `docs/RELEASE_REPORT_v0.2.0.md`
+  - `docs/HARDWARE_VALIDATION.md` mis à jour avec les scénarios `VJ-29` à `VJ-44` (`NOT RUN`).
+
+### Corrigé
+- **Sécurité des confirmations destructives** : correction de la fonction historique `isExactConfirmPhrase()` pour refuser formellement toute négation (*"Je ne confirme pas..."*) ou confirmation approximative (*"oui"*, *"d'accord"*).
+
 
 ### Ajouté
 - **Support multi-fournisseurs OpenAI Realtime (par défaut) et Google Gemini Live** :

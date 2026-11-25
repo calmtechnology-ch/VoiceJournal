@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "id": "VOICEKIT",
+      "canonical": "VoiceKit",
+      "type": "FRAMEWORK",
+      "aliases": ["voicekit", "voice kit", "voxcore", "vox core"]
+    },
+    {
+      "id": "VOICEJOURNAL",
+      "canonical": "VoiceJournal",
+      "type": "APPLICATION",
+      "aliases": ["voicejournal", "voice journal"]
+    },
+    {
+      "id": "CORES3",
+      "canonical": "CoreS3",
+      "type": "HARDWARE",
+      "aliases": ["cores3", "core s3", "m5cores3", "m5 core s3", "m5stack"]
+    },
+    {
+      "id": "ESP32",
+      "canonical": "ESP32",
+      "type": "HARDWARE",
+      "aliases": ["esp32", "esp 32", "esp32s3", "esp32 s3", "espressif"]
+    },
+    {
+      "id": "OPENAI",
+      "canonical": "OpenAI",
+      "type": "AI_PROVIDER",
+      "aliases": ["openai", "open ai", "chatgpt", "realtime"]
+    },
+    {
+      "id": "GEMINI",
+      "canonical": "Gemini",
+      "type": "AI_PROVIDER",
+      "aliases": ["gemini", "gemini live", "google gemini"]
+    },
+    {
+      "id": "RULEBOT",
+      "canonical": "RuleBot",
+      "type": "PROJECT",
+      "aliases": ["rulebot", "rule bot"]
+    },
+    {
+      "id": "VOICEFLOW",
+      "canonical": "VoiceFlow",
+      "type": "PROJECT",
+      "aliases": ["voiceflow", "voice flow"]
+    }
+  ]
+}
