@@ -198,6 +198,7 @@ private:
     // Widgets Accueil
     lv_obj_t* lblHomeHeaderTitle_ = nullptr;
     lv_obj_t* lblHomeHeaderState_ = nullptr;
+    lv_obj_t* btnHomeProvider_ = nullptr;
     lv_obj_t* lblHomeProvider_ = nullptr;
     lv_obj_t* lblHomeTime_ = nullptr;
     lv_obj_t* lblHomeProject_ = nullptr;
@@ -214,17 +215,20 @@ private:
     lv_obj_t* btnJournalClearFilter_ = nullptr;
     lv_obj_t* listJournalContainer_ = nullptr;
     std::vector<lv_obj_t*> journalCardObjs_;
+    std::vector<uint32_t> journalCardIds_;
 
     // Widgets Projets
     lv_obj_t* lblProjectsTitle_ = nullptr;
     lv_obj_t* listProjectsContainer_ = nullptr;
     std::vector<lv_obj_t*> projectCardObjs_;
+    std::vector<uint32_t> projectCardIds_;
 
     // Widgets Tâches
     lv_obj_t* lblTasksTitle_ = nullptr;
     lv_obj_t* lblTasksCount_ = nullptr;
     lv_obj_t* listTasksContainer_ = nullptr;
     std::vector<lv_obj_t*> taskCardObjs_;
+    std::vector<uint32_t> taskCardIds_;
 
     // Widgets Détail
     lv_obj_t* btnDetailBack_ = nullptr;

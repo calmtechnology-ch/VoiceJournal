@@ -73,7 +73,7 @@ void JournalUI::lvglTouchReadCallback(lv_indev_t* indev, lv_indev_data_t* data) 
     (void)indev;
     if (M5.Touch.getCount() > 0) {
         auto detail = M5.Touch.getDetail(0);
-        if (detail.isPressed()) {
+        if (detail.isPressed() || detail.wasPressed()) {
             data->state = LV_INDEV_STATE_PRESSED;
             data->point.x = detail.x;
             data->point.y = detail.y;
@@ -87,20 +87,6 @@ static void onNavBtnClicked(lv_event_t* e) {
     auto targetPage = static_cast<UiPage>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
     if (s_activeUi) {
         s_activeUi->setPage(targetPage);
-    }
-}
-
-static void onTalkBtnClicked(lv_event_t* e) {
-    (void)e;
-    if (s_activeUi) {
-        s_activeUi->pollTouch(millis());
-    }
-}
-
-static void onStopBtnClicked(lv_event_t* e) {
-    (void)e;
-    if (s_activeUi) {
-        // STOP direct prioritaire
     }
 }
 
@@ -140,28 +126,35 @@ void JournalUI::buildLvglUi() {
     if (indev_) {
         lv_indev_set_type(indev_, LV_INDEV_TYPE_POINTER);
         lv_indev_set_read_cb(indev_, lvglTouchReadCallback);
+        lv_timer_t* readTimer = lv_indev_get_read_timer(indev_);
+        if (readTimer) {
+            lv_timer_set_period(readTimer, 15);
+        }
     }
 
-    // Appliquer le thème sombre général
+    // Appliquer le thème sombre général et désactiver le scroll parasite sur l'écran racine
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(COLOR_HEX_BG), 0);
+    lv_obj_remove_flag(lv_screen_active(), LV_OBJ_FLAG_SCROLLABLE);
 
-    // 1. Barre de navigation inférieure (4 onglets de 28 px de haut à y=210)
+    // 1. Barre de navigation inférieure (4 onglets ergonomiques de 30 px de haut à y=204)
     navBar_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(navBar_, 320, 30);
-    lv_obj_set_pos(navBar_, 0, 210);
+    lv_obj_set_size(navBar_, 320, 36);
+    lv_obj_set_pos(navBar_, 0, 204);
     lv_obj_set_style_bg_color(navBar_, lv_color_hex(COLOR_HEX_CARD), 0);
     lv_obj_set_style_border_color(navBar_, lv_color_hex(COLOR_HEX_SEP), 0);
     lv_obj_set_style_border_width(navBar_, 1, 0);
-    lv_obj_set_style_pad_all(navBar_, 2, 0);
+    lv_obj_set_style_pad_all(navBar_, 1, 0);
     lv_obj_set_scrollbar_mode(navBar_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(navBar_, LV_OBJ_FLAG_SCROLLABLE);
 
     auto makeNavBtn = [this](lv_obj_t*& btn, const char* label, UiPage p, int x) {
         btn = lv_button_create(navBar_);
-        lv_obj_set_size(btn, 74, 24);
-        lv_obj_set_pos(btn, x, 1);
+        lv_obj_set_size(btn, 76, 30);
+        lv_obj_set_pos(btn, x, 2);
         lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_event_cb(btn, onNavBtnClicked, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(p)));
 
         lv_obj_t* lbl = lv_label_create(btn);
@@ -172,63 +165,87 @@ void JournalUI::buildLvglUi() {
     };
 
     makeNavBtn(btnNavHome_, "Accueil", UiPage::HOME, 2);
-    makeNavBtn(btnNavJournal_, "Journal", UiPage::JOURNAL, 80);
-    makeNavBtn(btnNavProjects_, "Projets", UiPage::PROJECTS, 158);
-    makeNavBtn(btnNavTasks_, "Tâches", UiPage::TASKS, 236);
+    makeNavBtn(btnNavJournal_, "Journal", UiPage::JOURNAL, 81);
+    makeNavBtn(btnNavProjects_, "Projets", UiPage::PROJECTS, 160);
+    makeNavBtn(btnNavTasks_, "Tâches", UiPage::TASKS, 239);
 
     // 2. Écran 1 : Accueil (Home)
     screenHome_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(screenHome_, 320, 210);
+    lv_obj_set_size(screenHome_, 320, 204);
     lv_obj_set_pos(screenHome_, 0, 0);
     lv_obj_set_style_bg_color(screenHome_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(screenHome_, 0, 0);
     lv_obj_set_style_pad_all(screenHome_, 6, 0);
     lv_obj_set_scrollbar_mode(screenHome_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(screenHome_, LV_OBJ_FLAG_SCROLLABLE);
 
     // Titre et état
     lblHomeHeaderTitle_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeHeaderTitle_, "VoiceJournal v0.3.0");
     lv_obj_set_style_text_font(lblHomeHeaderTitle_, &font_french_bold_16, 0);
     lv_obj_set_style_text_color(lblHomeHeaderTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
-    lv_obj_set_pos(lblHomeHeaderTitle_, 6, 4);
+    lv_obj_set_pos(lblHomeHeaderTitle_, 4, 2);
 
     lblHomeHeaderState_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeHeaderState_, "PRÊT");
     lv_obj_set_style_text_font(lblHomeHeaderState_, &font_french_12, 0);
     lv_obj_set_style_text_color(lblHomeHeaderState_, lv_color_hex(COLOR_HEX_SUCCESS), 0);
-    lv_obj_align(lblHomeHeaderState_, LV_ALIGN_TOP_RIGHT, -6, 6);
+    lv_obj_align(lblHomeHeaderState_, LV_ALIGN_TOP_RIGHT, -4, 4);
 
-    // Sous-titre : Fournisseur et heure
-    lblHomeProvider_ = lv_label_create(screenHome_);
+    // Sous-titre : Bouton fournisseur cliquable et heure
+    btnHomeProvider_ = lv_button_create(screenHome_);
+    lv_obj_set_size(btnHomeProvider_, 84, 26);
+    lv_obj_set_pos(btnHomeProvider_, 4, 24);
+    lv_obj_set_style_bg_color(btnHomeProvider_, lv_color_hex(COLOR_HEX_CARD), 0);
+    lv_obj_set_style_border_color(btnHomeProvider_, lv_color_hex(COLOR_HEX_SELECTION), 0);
+    lv_obj_set_style_border_width(btnHomeProvider_, 1, 0);
+    lv_obj_set_style_radius(btnHomeProvider_, 6, 0);
+    lv_obj_set_style_shadow_width(btnHomeProvider_, 0, 0);
+    lv_obj_set_style_pad_all(btnHomeProvider_, 0, 0);
+    lv_obj_remove_flag(btnHomeProvider_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(btnHomeProvider_, [](lv_event_t* e) {
+        (void)e;
+        if (!s_activeUi || !s_activeUi->isProviderSwitchEnabled()) return;
+        const uint32_t nowMs = millis();
+        if (s_activeUi->hasLastProviderAccepted_ &&
+            (nowMs - s_activeUi->lastProviderAcceptedMs_) < AppConfig::PROVIDER_SWITCH_DEBOUNCE_MS) {
+            return;
+        }
+        s_activeUi->hasLastProviderAccepted_ = true;
+        s_activeUi->lastProviderAcceptedMs_ = nowMs;
+        s_activeUi->pendingAction_ = TouchAction::SWITCH_PROVIDER;
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lblHomeProvider_ = lv_label_create(btnHomeProvider_);
     lv_label_set_text(lblHomeProvider_, "OpenAI");
     lv_obj_set_style_text_font(lblHomeProvider_, &font_french_14, 0);
     lv_obj_set_style_text_color(lblHomeProvider_, lv_color_hex(COLOR_HEX_SELECTION), 0);
-    lv_obj_set_pos(lblHomeProvider_, 6, 26);
+    lv_obj_center(lblHomeProvider_);
 
     lblHomeTime_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeTime_, "--:--");
     lv_obj_set_style_text_font(lblHomeTime_, &font_french_14, 0);
     lv_obj_set_style_text_color(lblHomeTime_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-    lv_obj_align(lblHomeTime_, LV_ALIGN_TOP_RIGHT, -6, 26);
+    lv_obj_align(lblHomeTime_, LV_ALIGN_TOP_RIGHT, -4, 28);
 
     lblHomeProject_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeProject_, "");
     lv_obj_set_style_text_font(lblHomeProject_, &font_french_12, 0);
     lv_obj_set_style_text_color(lblHomeProject_, lv_color_hex(COLOR_HEX_DUE), 0);
-    lv_obj_set_pos(lblHomeProject_, 80, 28);
+    lv_obj_set_pos(lblHomeProject_, 94, 30);
 
     // Compteur central
     lblHomeBigCounter_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeBigCounter_, "0");
     lv_obj_set_style_text_font(lblHomeBigCounter_, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lblHomeBigCounter_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
-    lv_obj_set_pos(lblHomeBigCounter_, 140, 68);
+    lv_obj_set_pos(lblHomeBigCounter_, 140, 62);
 
     lblHomeCounterDesc_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeCounterDesc_, "entrées en mémoire");
     lv_obj_set_style_text_font(lblHomeCounterDesc_, &font_french_14, 0);
     lv_obj_set_style_text_color(lblHomeCounterDesc_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-    lv_obj_set_pos(lblHomeCounterDesc_, 88, 102);
+    lv_obj_set_pos(lblHomeCounterDesc_, 88, 96);
 
     lblHomeStatus_ = lv_label_create(screenHome_);
     lv_label_set_text(lblHomeStatus_, "Initialisation...");
@@ -236,24 +253,44 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_text_color(lblHomeStatus_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
     lv_label_set_long_mode(lblHomeStatus_, LV_LABEL_LONG_CLIP);
     lv_obj_set_size(lblHomeStatus_, 300, 18);
-    lv_obj_set_pos(lblHomeStatus_, 4, 126);
+    lv_obj_set_pos(lblHomeStatus_, 4, 120);
 
-    // Boutons d'action : PARLER (largeur 196) et STOP (largeur 100)
+    // Boutons d'action : PARLER (largeur 190) et STOP (largeur 104)
     btnHomeTalk_ = lv_button_create(screenHome_);
-    lv_obj_set_size(btnHomeTalk_, BTN_TALK_W, 46);
-    lv_obj_set_pos(btnHomeTalk_, BTN_TALK_X, 150);
+    lv_obj_set_size(btnHomeTalk_, 190, 46);
+    lv_obj_set_pos(btnHomeTalk_, 4, 144);
     lv_obj_set_style_bg_color(btnHomeTalk_, lv_color_hex(COLOR_HEX_ACTION), 0);
     lv_obj_set_style_radius(btnHomeTalk_, 8, 0);
+    lv_obj_remove_flag(btnHomeTalk_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(btnHomeTalk_, [](lv_event_t* e) {
+        (void)e;
+        if (!s_activeUi || !s_activeUi->isTalkButtonEnabled()) return;
+        const uint32_t nowMs = millis();
+        if (s_activeUi->hasLastTalkAccepted_ &&
+            (nowMs - s_activeUi->lastTalkAcceptedMs_) < AppConfig::TOUCH_DEBOUNCE_MS) {
+            return;
+        }
+        s_activeUi->hasLastTalkAccepted_ = true;
+        s_activeUi->lastTalkAcceptedMs_ = nowMs;
+        s_activeUi->pendingAction_ = TouchAction::TALK_TOGGLE;
+    }, LV_EVENT_CLICKED, nullptr);
     lblHomeTalk_ = lv_label_create(btnHomeTalk_);
     lv_label_set_text(lblHomeTalk_, "PARLER");
     lv_obj_set_style_text_font(lblHomeTalk_, &font_french_bold_16, 0);
     lv_obj_center(lblHomeTalk_);
 
     btnHomeStop_ = lv_button_create(screenHome_);
-    lv_obj_set_size(btnHomeStop_, BTN_STOP_W, 46);
-    lv_obj_set_pos(btnHomeStop_, BTN_STOP_X, 150);
+    lv_obj_set_size(btnHomeStop_, 104, 46);
+    lv_obj_set_pos(btnHomeStop_, 200, 144);
     lv_obj_set_style_bg_color(btnHomeStop_, lv_color_hex(COLOR_HEX_STOP), 0);
     lv_obj_set_style_radius(btnHomeStop_, 8, 0);
+    lv_obj_remove_flag(btnHomeStop_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(btnHomeStop_, [](lv_event_t* e) {
+        (void)e;
+        if (s_activeUi) {
+            s_activeUi->pendingAction_ = TouchAction::STOP;
+        }
+    }, LV_EVENT_PRESSED, nullptr);
     lv_obj_t* lblStop = lv_label_create(btnHomeStop_);
     lv_label_set_text(lblStop, "STOP");
     lv_obj_set_style_text_font(lblStop, &font_french_bold_16, 0);
@@ -261,44 +298,56 @@ void JournalUI::buildLvglUi() {
 
     // 3. Écran 2 : Journal
     screenJournal_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(screenJournal_, 320, 210);
+    lv_obj_set_size(screenJournal_, 320, 204);
     lv_obj_set_pos(screenJournal_, 0, 0);
     lv_obj_set_style_bg_color(screenJournal_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(screenJournal_, 0, 0);
     lv_obj_set_style_pad_all(screenJournal_, 4, 0);
     lv_obj_set_scrollbar_mode(screenJournal_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(screenJournal_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(screenJournal_, LV_OBJ_FLAG_HIDDEN);
 
     lblJournalTitle_ = lv_label_create(screenJournal_);
     lv_label_set_text(lblJournalTitle_, "Journal");
     lv_obj_set_style_text_font(lblJournalTitle_, &font_french_bold_16, 0);
     lv_obj_set_style_text_color(lblJournalTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
-    lv_obj_set_pos(lblJournalTitle_, 6, 4);
+    lv_obj_set_pos(lblJournalTitle_, 6, 2);
 
     lblJournalSubtitle_ = lv_label_create(screenJournal_);
     lv_label_set_text(lblJournalSubtitle_, "0 entrées");
     lv_obj_set_style_text_font(lblJournalSubtitle_, &font_french_12, 0);
     lv_obj_set_style_text_color(lblJournalSubtitle_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-    lv_obj_align(lblJournalSubtitle_, LV_ALIGN_TOP_RIGHT, -6, 6);
+    lv_obj_align(lblJournalSubtitle_, LV_ALIGN_TOP_RIGHT, -6, 4);
 
     listJournalContainer_ = lv_obj_create(screenJournal_);
-    lv_obj_set_size(listJournalContainer_, 312, 175);
-    lv_obj_set_pos(listJournalContainer_, 0, 26);
+    lv_obj_set_size(listJournalContainer_, 312, 170);
+    lv_obj_set_pos(listJournalContainer_, 0, 24);
     lv_obj_set_style_bg_color(listJournalContainer_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(listJournalContainer_, 0, 0);
     lv_obj_set_style_pad_all(listJournalContainer_, 2, 0);
+    lv_obj_set_scrollbar_mode(listJournalContainer_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(listJournalContainer_, LV_OBJ_FLAG_SCROLLABLE);
 
     // 3 cartes d'entrées réutilisées pour afficher 3 observations visibles simultanément (Section 20)
+    journalCardIds_.assign(3, 0);
     for (int i = 0; i < 3; i++) {
         lv_obj_t* card = lv_obj_create(listJournalContainer_);
-        lv_obj_set_size(card, 308, 52);
-        lv_obj_set_pos(card, 0, i * 56);
+        lv_obj_set_size(card, 308, 50);
+        lv_obj_set_pos(card, 0, i * 54);
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_radius(card, 6, 0);
         lv_obj_set_style_pad_all(card, 4, 0);
         lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
+            const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+            if (s_activeUi && idx < s_activeUi->journalCardIds_.size() && s_activeUi->journalCardIds_[idx] > 0) {
+                s_activeUi->showEntryDetail(s_activeUi->journalCardIds_[idx]);
+            }
+        }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
 
         lv_obj_t* lblText = lv_label_create(card);
         lv_label_set_text(lblText, "");
@@ -310,7 +359,7 @@ void JournalUI::buildLvglUi() {
         lv_label_set_text(lblMeta, "");
         lv_obj_set_style_text_font(lblMeta, &font_french_12, 0);
         lv_obj_set_style_text_color(lblMeta, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-        lv_obj_set_pos(lblMeta, 4, 24);
+        lv_obj_set_pos(lblMeta, 4, 22);
 
         lv_obj_t* lblChev = lv_label_create(card);
         lv_label_set_text(lblChev, ">");
@@ -323,36 +372,49 @@ void JournalUI::buildLvglUi() {
 
     // 4. Écran 3 : Projets
     screenProjects_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(screenProjects_, 320, 210);
+    lv_obj_set_size(screenProjects_, 320, 204);
     lv_obj_set_pos(screenProjects_, 0, 0);
     lv_obj_set_style_bg_color(screenProjects_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(screenProjects_, 0, 0);
     lv_obj_set_style_pad_all(screenProjects_, 4, 0);
     lv_obj_set_scrollbar_mode(screenProjects_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(screenProjects_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(screenProjects_, LV_OBJ_FLAG_HIDDEN);
 
     lblProjectsTitle_ = lv_label_create(screenProjects_);
     lv_label_set_text(lblProjectsTitle_, "Projets");
     lv_obj_set_style_text_font(lblProjectsTitle_, &font_french_bold_16, 0);
     lv_obj_set_style_text_color(lblProjectsTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
-    lv_obj_set_pos(lblProjectsTitle_, 6, 4);
+    lv_obj_set_pos(lblProjectsTitle_, 6, 2);
 
     listProjectsContainer_ = lv_obj_create(screenProjects_);
-    lv_obj_set_size(listProjectsContainer_, 312, 175);
-    lv_obj_set_pos(listProjectsContainer_, 0, 26);
+    lv_obj_set_size(listProjectsContainer_, 312, 170);
+    lv_obj_set_pos(listProjectsContainer_, 0, 24);
     lv_obj_set_style_bg_color(listProjectsContainer_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(listProjectsContainer_, 0, 0);
     lv_obj_set_style_pad_all(listProjectsContainer_, 2, 0);
+    lv_obj_set_scrollbar_mode(listProjectsContainer_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(listProjectsContainer_, LV_OBJ_FLAG_SCROLLABLE);
 
+    projectCardIds_.assign(3, 0);
     for (int i = 0; i < 3; i++) {
         lv_obj_t* card = lv_obj_create(listProjectsContainer_);
-        lv_obj_set_size(card, 308, 52);
-        lv_obj_set_pos(card, 0, i * 56);
+        lv_obj_set_size(card, 308, 50);
+        lv_obj_set_pos(card, 0, i * 54);
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_radius(card, 6, 0);
         lv_obj_set_style_pad_all(card, 4, 0);
+        lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(card, [](lv_event_t* e) {
+            const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+            if (s_activeUi && idx < s_activeUi->projectCardIds_.size() && s_activeUi->projectCardIds_[idx] > 0) {
+                s_activeUi->setJournalFilter(static_cast<int32_t>(s_activeUi->projectCardIds_[idx]));
+            }
+        }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
 
         lv_obj_t* lblName = lv_label_create(card);
         lv_label_set_text(lblName, "");
@@ -364,53 +426,77 @@ void JournalUI::buildLvglUi() {
         lv_label_set_text(lblMeta, "");
         lv_obj_set_style_text_font(lblMeta, &font_french_12, 0);
         lv_obj_set_style_text_color(lblMeta, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-        lv_obj_set_pos(lblMeta, 4, 24);
+        lv_obj_set_pos(lblMeta, 4, 22);
 
         projectCardObjs_.push_back(card);
     }
 
     // 5. Écran 4 : Tâches
     screenTasks_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(screenTasks_, 320, 210);
+    lv_obj_set_size(screenTasks_, 320, 204);
     lv_obj_set_pos(screenTasks_, 0, 0);
     lv_obj_set_style_bg_color(screenTasks_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(screenTasks_, 0, 0);
     lv_obj_set_style_pad_all(screenTasks_, 4, 0);
     lv_obj_set_scrollbar_mode(screenTasks_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(screenTasks_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(screenTasks_, LV_OBJ_FLAG_HIDDEN);
 
     lblTasksTitle_ = lv_label_create(screenTasks_);
     lv_label_set_text(lblTasksTitle_, "Tâches");
     lv_obj_set_style_text_font(lblTasksTitle_, &font_french_bold_16, 0);
     lv_obj_set_style_text_color(lblTasksTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
-    lv_obj_set_pos(lblTasksTitle_, 6, 4);
+    lv_obj_set_pos(lblTasksTitle_, 6, 2);
 
     lblTasksCount_ = lv_label_create(screenTasks_);
     lv_label_set_text(lblTasksCount_, "0 à faire");
     lv_obj_set_style_text_font(lblTasksCount_, &font_french_12, 0);
     lv_obj_set_style_text_color(lblTasksCount_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-    lv_obj_align(lblTasksCount_, LV_ALIGN_TOP_RIGHT, -6, 6);
+    lv_obj_align(lblTasksCount_, LV_ALIGN_TOP_RIGHT, -6, 4);
 
     listTasksContainer_ = lv_obj_create(screenTasks_);
-    lv_obj_set_size(listTasksContainer_, 312, 175);
-    lv_obj_set_pos(listTasksContainer_, 0, 26);
+    lv_obj_set_size(listTasksContainer_, 312, 170);
+    lv_obj_set_pos(listTasksContainer_, 0, 24);
     lv_obj_set_style_bg_color(listTasksContainer_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(listTasksContainer_, 0, 0);
     lv_obj_set_style_pad_all(listTasksContainer_, 2, 0);
+    lv_obj_set_scrollbar_mode(listTasksContainer_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(listTasksContainer_, LV_OBJ_FLAG_SCROLLABLE);
 
+    taskCardIds_.assign(3, 0);
     for (int i = 0; i < 3; i++) {
         lv_obj_t* card = lv_obj_create(listTasksContainer_);
-        lv_obj_set_size(card, 308, 52);
-        lv_obj_set_pos(card, 0, i * 56);
+        lv_obj_set_size(card, 308, 50);
+        lv_obj_set_pos(card, 0, i * 54);
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_radius(card, 6, 0);
         lv_obj_set_style_pad_all(card, 4, 0);
+        lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* cb = lv_checkbox_create(card);
         lv_checkbox_set_text(cb, "");
         lv_obj_set_pos(cb, 2, 8);
+        lv_obj_add_event_cb(cb, [](lv_event_t* e) {
+            const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+            if (!s_activeUi || !s_activeUi->repo_ || idx >= s_activeUi->taskCardIds_.size()) return;
+            const uint32_t tid = s_activeUi->taskCardIds_[idx];
+            if (tid == 0) return;
+            VoiceJournal::JournalEntry entry;
+            if (s_activeUi->repo_->getEntry(tid, entry)) {
+                lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+                const bool checked = lv_obj_has_state(target, LV_STATE_CHECKED);
+                entry.status = checked ? VoiceJournal::EntryStatus::COMPLETED
+                                       : VoiceJournal::EntryStatus::OPEN;
+                if (s_activeUi->timeService_) {
+                    entry.updatedAt = s_activeUi->timeService_->getCurrentUtc();
+                }
+                s_activeUi->repo_->updateEntry(entry);
+                s_activeUi->needsRedraw_ = true;
+            }
+        }, LV_EVENT_VALUE_CHANGED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
 
         lv_obj_t* lblDesc = lv_label_create(card);
         lv_label_set_text(lblDesc, "");
@@ -422,7 +508,7 @@ void JournalUI::buildLvglUi() {
         lv_label_set_text(lblMeta, "");
         lv_obj_set_style_text_font(lblMeta, &font_french_12, 0);
         lv_obj_set_style_text_color(lblMeta, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-        lv_obj_set_pos(lblMeta, 34, 24);
+        lv_obj_set_pos(lblMeta, 34, 22);
 
         taskCardObjs_.push_back(card);
     }
@@ -434,12 +520,15 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_bg_color(screenDetail_, lv_color_hex(COLOR_HEX_BG), 0);
     lv_obj_set_style_border_width(screenDetail_, 0, 0);
     lv_obj_set_style_pad_all(screenDetail_, 6, 0);
+    lv_obj_set_scrollbar_mode(screenDetail_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(screenDetail_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(screenDetail_, LV_OBJ_FLAG_HIDDEN);
 
     btnDetailBack_ = lv_button_create(screenDetail_);
-    lv_obj_set_size(btnDetailBack_, 80, 26);
-    lv_obj_set_pos(btnDetailBack_, 4, 4);
+    lv_obj_set_size(btnDetailBack_, 92, 30);
+    lv_obj_set_pos(btnDetailBack_, 4, 2);
     lv_obj_set_style_bg_color(btnDetailBack_, lv_color_hex(COLOR_HEX_CARD), 0);
+    lv_obj_remove_flag(btnDetailBack_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* lblBack = lv_label_create(btnDetailBack_);
     lv_label_set_text(lblBack, "← Retour");
     lv_obj_set_style_text_font(lblBack, &font_french_12, 0);
@@ -484,8 +573,9 @@ void JournalUI::buildLvglUi() {
     // Boutons d'action dans le détail
     btnDetailRead_ = lv_button_create(screenDetail_);
     lv_obj_set_size(btnDetailRead_, 96, 36);
-    lv_obj_set_pos(btnDetailRead_, 6, 196);
+    lv_obj_set_pos(btnDetailRead_, 6, 192);
     lv_obj_set_style_bg_color(btnDetailRead_, lv_color_hex(COLOR_HEX_ACTION), 0);
+    lv_obj_remove_flag(btnDetailRead_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* lblRead = lv_label_create(btnDetailRead_);
     lv_label_set_text(lblRead, "LIRE");
     lv_obj_set_style_text_font(lblRead, &font_french_bold_16, 0);
@@ -497,8 +587,9 @@ void JournalUI::buildLvglUi() {
 
     btnDetailAction_ = lv_button_create(screenDetail_);
     lv_obj_set_size(btnDetailAction_, 108, 36);
-    lv_obj_set_pos(btnDetailAction_, 110, 196);
+    lv_obj_set_pos(btnDetailAction_, 110, 192);
     lv_obj_set_style_bg_color(btnDetailAction_, lv_color_hex(COLOR_HEX_SUCCESS), 0);
+    lv_obj_remove_flag(btnDetailAction_, LV_OBJ_FLAG_SCROLLABLE);
     lblDetailAction_ = lv_label_create(btnDetailAction_);
     lv_label_set_text(lblDetailAction_, "RÉSOLU");
     lv_obj_set_style_text_font(lblDetailAction_, &font_french_bold_16, 0);
@@ -510,12 +601,14 @@ void JournalUI::buildLvglUi() {
 
     // 7. Bandeau vocal global (overlay permanent pendant écoute ou réponse, Section 24)
     voiceBanner_ = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(voiceBanner_, 320, 34);
-    lv_obj_set_pos(voiceBanner_, 0, 206);
+    lv_obj_set_size(voiceBanner_, 320, 40);
+    lv_obj_set_pos(voiceBanner_, 0, 200);
     lv_obj_set_style_bg_color(voiceBanner_, lv_color_hex(COLOR_HEX_CARD), 0);
     lv_obj_set_style_border_color(voiceBanner_, lv_color_hex(COLOR_HEX_ACTION), 0);
     lv_obj_set_style_border_width(voiceBanner_, 1, 0);
     lv_obj_set_style_pad_all(voiceBanner_, 2, 0);
+    lv_obj_set_scrollbar_mode(voiceBanner_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(voiceBanner_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(voiceBanner_, LV_OBJ_FLAG_HIDDEN);
 
     voiceBannerStateLabel_ = lv_label_create(voiceBanner_);
@@ -525,9 +618,16 @@ void JournalUI::buildLvglUi() {
     lv_obj_align(voiceBannerStateLabel_, LV_ALIGN_LEFT_MID, 8, 0);
 
     voiceBannerBtnStop_ = lv_button_create(voiceBanner_);
-    lv_obj_set_size(voiceBannerBtnStop_, 74, 28);
+    lv_obj_set_size(voiceBannerBtnStop_, 78, 32);
     lv_obj_align(voiceBannerBtnStop_, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_set_style_bg_color(voiceBannerBtnStop_, lv_color_hex(COLOR_HEX_STOP), 0);
+    lv_obj_remove_flag(voiceBannerBtnStop_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(voiceBannerBtnStop_, [](lv_event_t* e) {
+        (void)e;
+        if (s_activeUi) {
+            s_activeUi->pendingAction_ = TouchAction::STOP;
+        }
+    }, LV_EVENT_PRESSED, nullptr);
     lv_obj_t* lblVStop = lv_label_create(voiceBannerBtnStop_);
     lv_label_set_text(lblVStop, "STOP");
     lv_obj_set_style_text_font(lblVStop, &font_french_bold_16, 0);
@@ -590,6 +690,7 @@ void JournalUI::updateJournalWidgets() {
     for (size_t i = 0; i < journalCardObjs_.size(); i++) {
         lv_obj_t* card = journalCardObjs_[i];
         if (i < ids.size()) {
+            if (i < journalCardIds_.size()) journalCardIds_[i] = ids[i];
             lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
             VoiceJournal::JournalEntry entry;
             if (repo_->getEntry(ids[i], entry)) {
@@ -615,6 +716,7 @@ void JournalUI::updateJournalWidgets() {
                 if (lblMeta) lv_label_set_text(lblMeta, meta.c_str());
             }
         } else {
+            if (i < journalCardIds_.size()) journalCardIds_[i] = 0;
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
@@ -629,6 +731,7 @@ void JournalUI::updateProjectsWidgets() {
         if (i < projects.size()) {
             lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
             const auto& p = projects[i];
+            if (i < projectCardIds_.size()) projectCardIds_[i] = p.id;
 
             lv_obj_t* lblName = lv_obj_get_child(card, 0);
             std::string nameStr = p.name;
@@ -649,6 +752,7 @@ void JournalUI::updateProjectsWidgets() {
             std::string meta = std::to_string(entryCount) + " entrées · " + std::to_string(probCount) + " problèmes";
             if (lblMeta) lv_label_set_text(lblMeta, meta.c_str());
         } else {
+            if (i < projectCardIds_.size()) projectCardIds_[i] = 0;
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
@@ -666,6 +770,7 @@ void JournalUI::updateTasksWidgets() {
         if (i < tasks.size()) {
             lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
             const auto& t = tasks[i];
+            if (i < taskCardIds_.size()) taskCardIds_[i] = t.id;
 
             lv_obj_t* cb = lv_obj_get_child(card, 0);
             if (cb) {
@@ -695,6 +800,7 @@ void JournalUI::updateTasksWidgets() {
             meta += (t.status == VoiceJournal::EntryStatus::COMPLETED) ? "Terminée" : "À faire";
             if (lblMeta) lv_label_set_text(lblMeta, meta.c_str());
         } else {
+            if (i < taskCardIds_.size()) taskCardIds_[i] = 0;
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
@@ -930,6 +1036,7 @@ TouchAction JournalUI::pollTouch(uint32_t nowMs) {
         return act;
     }
 
+#if !VJ_DIAG_ENABLE_LVGL
     if (M5.Touch.getCount() > 0) {
         auto detail = M5.Touch.getDetail(0);
         TouchSample sample;
@@ -940,6 +1047,10 @@ TouchAction JournalUI::pollTouch(uint32_t nowMs) {
         return processTouchSample(sample, nowMs);
     }
     return processTouchSample(TouchSample{}, nowMs);
+#else
+    (void)nowMs;
+    return TouchAction::NONE;
+#endif
 #else
     (void)nowMs;
     return TouchAction::NONE;
