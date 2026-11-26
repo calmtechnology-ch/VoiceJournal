@@ -83,14 +83,168 @@ struct JournalCardSnapshot {
 };
 
 /**
+ * @struct VirtualListScrollState
+ * @brief État de défilement vertical virtualisé (3 cartes LVGL réutilisées, jusqu'à 1 000 éléments).
+ */
+struct VirtualListScrollState {
+    static constexpr size_t VISIBLE_CARDS = 3;
+    static constexpr int DRAG_THRESHOLD_PX = 10;
+    static constexpr int SCROLL_STEP_PX = 34;
+
+    size_t offset = 0;
+    size_t totalItems = 0;
+
+    bool tracking = false;
+    bool dragging = false;
+    bool suppressNextClick = false;
+    int startY = 0;
+    int lastStepY = 0;
+
+    size_t maxOffset() const {
+        return (totalItems > VISIBLE_CARDS) ? (totalItems - VISIBLE_CARDS) : 0;
+    }
+
+    void setTotalItems(size_t total) {
+        totalItems = total;
+        const size_t maxOff = maxOffset();
+        if (offset > maxOff) {
+            offset = maxOff;
+        }
+    }
+
+    void resetToTop() {
+        offset = 0;
+        tracking = false;
+        dragging = false;
+        suppressNextClick = false;
+    }
+
+    bool setOffset(size_t newOffset) {
+        const size_t maxOff = maxOffset();
+        const size_t clamped = (newOffset > maxOff) ? maxOff : newOffset;
+        if (clamped == offset) {
+            return false;
+        }
+        offset = clamped;
+        return true;
+    }
+
+    bool scrollBy(int delta) {
+        if (delta == 0) {
+            return false;
+        }
+        const size_t maxOff = maxOffset();
+        size_t next = offset;
+        if (delta > 0) {
+            const size_t step = static_cast<size_t>(delta);
+            next = (offset + step > maxOff) ? maxOff : (offset + step);
+        } else {
+            const size_t step = static_cast<size_t>(-delta);
+            next = (step >= offset) ? 0 : (offset - step);
+        }
+        if (next == offset) {
+            return false;
+        }
+        offset = next;
+        return true;
+    }
+
+    void onTouchPress(int y) {
+        tracking = true;
+        dragging = false;
+        suppressNextClick = false;
+        startY = y;
+        lastStepY = y;
+    }
+
+    bool onTouchMove(int y) {
+        if (!tracking) {
+            onTouchPress(y);
+            return false;
+        }
+        const int totalDy = y - startY;
+        const int absTotalDy = (totalDy < 0) ? -totalDy : totalDy;
+        if (!dragging && absTotalDy >= DRAG_THRESHOLD_PX) {
+            dragging = true;
+            suppressNextClick = true;
+        }
+        if (!dragging) {
+            return false;
+        }
+
+        bool changed = false;
+        int stepDy = y - lastStepY;
+        const size_t maxOff = maxOffset();
+        while (stepDy <= -SCROLL_STEP_PX) {
+            stepDy += SCROLL_STEP_PX;
+            lastStepY -= SCROLL_STEP_PX;
+            if (offset < maxOff) {
+                ++offset;
+                changed = true;
+            }
+        }
+        while (stepDy >= SCROLL_STEP_PX) {
+            stepDy -= SCROLL_STEP_PX;
+            lastStepY += SCROLL_STEP_PX;
+            if (offset > 0) {
+                --offset;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    void onTouchRelease() {
+        tracking = false;
+        dragging = false;
+    }
+
+    bool consumeClickAllowed() {
+        if (dragging || suppressNextClick) {
+            suppressNextClick = false;
+            return false;
+        }
+        return true;
+    }
+
+    void computeScrollbarGeometry(int trackHeight, int minThumbHeight,
+                                  int& outThumbY, int& outThumbH) const {
+        if (totalItems <= VISIBLE_CARDS || trackHeight <= 0) {
+            outThumbY = 0;
+            outThumbH = (trackHeight > 0) ? trackHeight : 0;
+            return;
+        }
+        int thumbH = static_cast<int>(
+            (static_cast<uint64_t>(trackHeight) * VISIBLE_CARDS) / totalItems);
+        if (thumbH < minThumbHeight) {
+            thumbH = minThumbHeight;
+        }
+        if (thumbH > trackHeight) {
+            thumbH = trackHeight;
+        }
+        const size_t maxOff = maxOffset();
+        const int travel = trackHeight - thumbH;
+        outThumbY = (maxOff > 0 && travel > 0)
+                        ? static_cast<int>(
+                              (static_cast<uint64_t>(travel) * offset) / maxOff)
+                        : 0;
+        outThumbH = thumbH;
+    }
+};
+
+/**
  * @struct JournalDisplaySnapshot
- * @brief Instantané logique de la page Journal (COR-ST06).
+ * @brief Instantané logique de la page Journal (COR-ST06 + défilement virtualisé).
  */
 struct JournalDisplaySnapshot {
     bool littleFsMounted = false;
     bool repositoryReady = false;
     bool filterActive = false;
     size_t totalEntries = 0;
+    size_t filteredEntries = 0;
+    size_t scrollOffset = 0;
+    size_t maxScrollOffset = 0;
+    bool scrollbarVisible = false;
     size_t queryResultCount = 0;
     size_t visibleCards = 0;
     size_t readErrors = 0;
@@ -188,6 +342,30 @@ public:
      */
     JournalDisplaySnapshot buildJournalSnapshot() const;
 
+    /**
+     * @brief Contrôle du défilement vertical virtualisé du Journal (tactile et tests natifs).
+     */
+    void scrollJournalBy(int delta);
+    void setJournalScrollOffset(size_t offset);
+    void resetJournalScroll();
+    size_t getJournalScrollOffset() const { return journalScroll_.offset; }
+
+    void onJournalListTouchPress(int y);
+    bool onJournalListTouchMove(int y);
+    void onJournalListTouchRelease();
+    bool onJournalCardClicked(size_t cardIndex);
+
+    /**
+     * @brief Contrôle du défilement vertical virtualisé des pages Projets et Tâches.
+     */
+    void scrollProjectsBy(int delta);
+    size_t getProjectsScrollOffset() const { return projectScroll_.offset; }
+    std::vector<uint32_t> getVisibleProjectIds() const;
+
+    void scrollTasksBy(int delta);
+    size_t getTasksScrollOffset() const { return taskScroll_.offset; }
+    std::vector<uint32_t> getVisibleTaskIds() const;
+
     uint32_t getSelectedDetailEntryId() const { return selectedDetailEntryId_; }
 
     static String toDisplayAscii(const String& utf8);
@@ -214,6 +392,13 @@ private:
     uint32_t lastProviderAcceptedMs_ = 0;
 
     TouchAction pendingAction_ = TouchAction::NONE;
+
+    VirtualListScrollState journalScroll_;
+    VirtualListScrollState projectScroll_;
+    VirtualListScrollState taskScroll_;
+
+    size_t computeFilteredJournalCount() const;
+    size_t computeTaskCount() const;
 
 #ifdef ARDUINO
     // Objets LVGL 9
@@ -261,12 +446,17 @@ private:
     lv_obj_t* btnJournalClearFilter_ = nullptr;
     lv_obj_t* lblJournalEmpty_ = nullptr;
     lv_obj_t* listJournalContainer_ = nullptr;
+    lv_obj_t* journalScrollTrack_ = nullptr;
+    lv_obj_t* journalScrollThumb_ = nullptr;
     std::vector<lv_obj_t*> journalCardObjs_;
     std::vector<uint32_t> journalCardIds_;
 
     // Widgets Projets
     lv_obj_t* lblProjectsTitle_ = nullptr;
+    lv_obj_t* lblProjectsSubtitle_ = nullptr;
     lv_obj_t* listProjectsContainer_ = nullptr;
+    lv_obj_t* projectScrollTrack_ = nullptr;
+    lv_obj_t* projectScrollThumb_ = nullptr;
     std::vector<lv_obj_t*> projectCardObjs_;
     std::vector<uint32_t> projectCardIds_;
 
@@ -274,6 +464,8 @@ private:
     lv_obj_t* lblTasksTitle_ = nullptr;
     lv_obj_t* lblTasksCount_ = nullptr;
     lv_obj_t* listTasksContainer_ = nullptr;
+    lv_obj_t* taskScrollTrack_ = nullptr;
+    lv_obj_t* taskScrollThumb_ = nullptr;
     std::vector<lv_obj_t*> taskCardObjs_;
     std::vector<uint32_t> taskCardIds_;
 
@@ -297,6 +489,20 @@ private:
     void updateDetailWidgets();
     void updateVoiceBanner();
     void updateNavBar();
+    void updateScrollbarVisual(lv_obj_t* track, lv_obj_t* thumb, const VirtualListScrollState& state);
+    void handleVirtualListTouchEvent(uintptr_t listId, lv_event_code_t code, int y);
+    lv_indev_t* getInputDevice() const { return indev_; }
+
+    static constexpr int SCROLLBAR_TRACK_X = 303;
+    static constexpr int SCROLLBAR_TRACK_Y = 2;
+    static constexpr int SCROLLBAR_TRACK_W = 4;
+    static constexpr int SCROLLBAR_TRACK_H = 154;
+    static constexpr int SCROLLBAR_MIN_THUMB_H = 18;
+    static constexpr uintptr_t VIRTUAL_LIST_JOURNAL = 1;
+    static constexpr uintptr_t VIRTUAL_LIST_PROJECTS = 2;
+    static constexpr uintptr_t VIRTUAL_LIST_TASKS = 3;
+
+    static void onVirtualListTouchCb(lv_event_t* e);
 
     std::string lastDisplayedTime_;
     uint32_t lastClockCheckMs_ = 0;

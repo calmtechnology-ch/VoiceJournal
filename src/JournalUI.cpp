@@ -90,6 +90,76 @@ static void onNavBtnClicked(lv_event_t* e) {
     }
 }
 
+void JournalUI::onVirtualListTouchCb(lv_event_t* e) {
+    if (!s_activeUi) return;
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_PRESSED &&
+        code != LV_EVENT_PRESSING &&
+        code != LV_EVENT_RELEASED &&
+        code != LV_EVENT_PRESS_LOST) {
+        return;
+    }
+
+    const uintptr_t listId = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+    lv_indev_t* indev = lv_indev_active();
+    if (!indev) {
+        indev = s_activeUi->getInputDevice();
+    }
+    lv_point_t pt{0, 0};
+    if (indev) {
+        lv_indev_get_point(indev, &pt);
+    }
+    s_activeUi->handleVirtualListTouchEvent(listId, code, static_cast<int>(pt.y));
+}
+
+void JournalUI::handleVirtualListTouchEvent(uintptr_t listId, lv_event_code_t code, int y) {
+    if (listId == VIRTUAL_LIST_JOURNAL) {
+        if (code == LV_EVENT_PRESSED) {
+            onJournalListTouchPress(y);
+        } else if (code == LV_EVENT_PRESSING) {
+            if (onJournalListTouchMove(y)) {
+                updateJournalWidgets();
+            }
+        } else {
+            onJournalListTouchRelease();
+        }
+    } else if (listId == VIRTUAL_LIST_PROJECTS) {
+        if (code == LV_EVENT_PRESSED) {
+            projectScroll_.onTouchPress(y);
+        } else if (code == LV_EVENT_PRESSING) {
+            if (projectScroll_.onTouchMove(y)) {
+                updateProjectsWidgets();
+            }
+        } else {
+            projectScroll_.onTouchRelease();
+        }
+    } else if (listId == VIRTUAL_LIST_TASKS) {
+        if (code == LV_EVENT_PRESSED) {
+            taskScroll_.onTouchPress(y);
+        } else if (code == LV_EVENT_PRESSING) {
+            if (taskScroll_.onTouchMove(y)) {
+                updateTasksWidgets();
+            }
+        } else {
+            taskScroll_.onTouchRelease();
+        }
+    }
+}
+
+void JournalUI::updateScrollbarVisual(lv_obj_t* track, lv_obj_t* thumb, const VirtualListScrollState& state) {
+    if (!track || !thumb) return;
+    if (state.totalItems <= VirtualListScrollState::VISIBLE_CARDS) {
+        lv_obj_add_flag(track, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_HIDDEN);
+    int thumbY = 0;
+    int thumbH = SCROLLBAR_MIN_THUMB_H;
+    state.computeScrollbarGeometry(SCROLLBAR_TRACK_H, SCROLLBAR_MIN_THUMB_H, thumbY, thumbH);
+    lv_obj_set_size(thumb, SCROLLBAR_TRACK_W, thumbH);
+    lv_obj_set_pos(thumb, 0, thumbY);
+}
+
 void JournalUI::buildLvglUi() {
 #if !VJ_DIAG_ENABLE_LVGL
     // Mode diagnostic sans LVGL : écran minimal M5.Display
@@ -349,6 +419,36 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_pad_all(listJournalContainer_, 2, 0);
     lv_obj_set_scrollbar_mode(listJournalContainer_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(listJournalContainer_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(listJournalContainer_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(listJournalContainer_, onVirtualListTouchCb, LV_EVENT_ALL,
+                        reinterpret_cast<void*>(VIRTUAL_LIST_JOURNAL));
+
+    auto makeScrollbar = [](lv_obj_t* parent, lv_obj_t*& track, lv_obj_t*& thumb) {
+        track = lv_obj_create(parent);
+        lv_obj_set_size(track, SCROLLBAR_TRACK_W, SCROLLBAR_TRACK_H);
+        lv_obj_set_pos(track, SCROLLBAR_TRACK_X, SCROLLBAR_TRACK_Y);
+        lv_obj_set_style_bg_color(track, lv_color_hex(COLOR_HEX_SEP), 0);
+        lv_obj_set_style_bg_opa(track, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(track, 0, 0);
+        lv_obj_set_style_radius(track, 2, 0);
+        lv_obj_set_style_pad_all(track, 0, 0);
+        lv_obj_set_scrollbar_mode(track, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(track, LV_OBJ_FLAG_HIDDEN);
+
+        thumb = lv_obj_create(track);
+        lv_obj_set_size(thumb, SCROLLBAR_TRACK_W, SCROLLBAR_MIN_THUMB_H);
+        lv_obj_set_pos(thumb, 0, 0);
+        lv_obj_set_style_bg_color(thumb, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
+        lv_obj_set_style_bg_opa(thumb, LV_OPA_90, 0);
+        lv_obj_set_style_border_width(thumb, 0, 0);
+        lv_obj_set_style_radius(thumb, 2, 0);
+        lv_obj_set_style_pad_all(thumb, 0, 0);
+        lv_obj_set_scrollbar_mode(thumb, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(thumb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(thumb, LV_OBJ_FLAG_CLICKABLE);
+    };
 
     lblJournalEmpty_ = lv_label_create(listJournalContainer_);
     lv_label_set_text(lblJournalEmpty_, "");
@@ -360,11 +460,11 @@ void JournalUI::buildLvglUi() {
     lv_obj_add_flag(lblJournalEmpty_, LV_OBJ_FLAG_HIDDEN);
 
     // 3 cartes d'entrées réutilisées pour afficher 3 observations visibles simultanément (Section 20)
-    journalCardIds_.assign(3, 0);
-    for (int i = 0; i < 3; i++) {
+    journalCardIds_.assign(VirtualListScrollState::VISIBLE_CARDS, 0);
+    for (size_t i = 0; i < VirtualListScrollState::VISIBLE_CARDS; i++) {
         lv_obj_t* card = lv_obj_create(listJournalContainer_);
-        lv_obj_set_size(card, 308, 50);
-        lv_obj_set_pos(card, 0, i * 54);
+        lv_obj_set_size(card, 300, 50);
+        lv_obj_set_pos(card, 0, static_cast<int32_t>(i * 54));
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
@@ -373,10 +473,11 @@ void JournalUI::buildLvglUi() {
         lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
         lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
             const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
-            if (s_activeUi && idx < s_activeUi->journalCardIds_.size() && s_activeUi->journalCardIds_[idx] > 0) {
-                s_activeUi->showEntryDetail(s_activeUi->journalCardIds_[idx]);
+            if (s_activeUi) {
+                s_activeUi->onJournalCardClicked(idx);
             }
         }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
 
@@ -400,6 +501,7 @@ void JournalUI::buildLvglUi() {
 
         journalCardObjs_.push_back(card);
     }
+    makeScrollbar(listJournalContainer_, journalScrollTrack_, journalScrollThumb_);
 
     // 4. Écran 3 : Projets
     screenProjects_ = lv_obj_create(lv_screen_active());
@@ -418,6 +520,12 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_text_color(lblProjectsTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
     lv_obj_set_pos(lblProjectsTitle_, 6, 2);
 
+    lblProjectsSubtitle_ = lv_label_create(screenProjects_);
+    lv_label_set_text(lblProjectsSubtitle_, "0 projets");
+    lv_obj_set_style_text_font(lblProjectsSubtitle_, &font_french_12, 0);
+    lv_obj_set_style_text_color(lblProjectsSubtitle_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
+    lv_obj_align(lblProjectsSubtitle_, LV_ALIGN_TOP_RIGHT, -6, 4);
+
     listProjectsContainer_ = lv_obj_create(screenProjects_);
     lv_obj_set_size(listProjectsContainer_, 312, 170);
     lv_obj_set_pos(listProjectsContainer_, 0, 24);
@@ -426,12 +534,15 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_pad_all(listProjectsContainer_, 2, 0);
     lv_obj_set_scrollbar_mode(listProjectsContainer_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(listProjectsContainer_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(listProjectsContainer_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(listProjectsContainer_, onVirtualListTouchCb, LV_EVENT_ALL,
+                        reinterpret_cast<void*>(VIRTUAL_LIST_PROJECTS));
 
-    projectCardIds_.assign(3, 0);
-    for (int i = 0; i < 3; i++) {
+    projectCardIds_.assign(VirtualListScrollState::VISIBLE_CARDS, 0);
+    for (size_t i = 0; i < VirtualListScrollState::VISIBLE_CARDS; i++) {
         lv_obj_t* card = lv_obj_create(listProjectsContainer_);
-        lv_obj_set_size(card, 308, 50);
-        lv_obj_set_pos(card, 0, i * 54);
+        lv_obj_set_size(card, 300, 50);
+        lv_obj_set_pos(card, 0, static_cast<int32_t>(i * 54));
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
@@ -440,9 +551,11 @@ void JournalUI::buildLvglUi() {
         lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
         lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(card, [](lv_event_t* e) {
             const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
-            if (s_activeUi && idx < s_activeUi->projectCardIds_.size() && s_activeUi->projectCardIds_[idx] > 0) {
+            if (!s_activeUi || !s_activeUi->projectScroll_.consumeClickAllowed()) return;
+            if (idx < s_activeUi->projectCardIds_.size() && s_activeUi->projectCardIds_[idx] > 0) {
                 s_activeUi->setJournalFilter(static_cast<int32_t>(s_activeUi->projectCardIds_[idx]));
             }
         }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
@@ -461,6 +574,7 @@ void JournalUI::buildLvglUi() {
 
         projectCardObjs_.push_back(card);
     }
+    makeScrollbar(listProjectsContainer_, projectScrollTrack_, projectScrollThumb_);
 
     // 5. Écran 4 : Tâches
     screenTasks_ = lv_obj_create(lv_screen_active());
@@ -493,12 +607,15 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_pad_all(listTasksContainer_, 2, 0);
     lv_obj_set_scrollbar_mode(listTasksContainer_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(listTasksContainer_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(listTasksContainer_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(listTasksContainer_, onVirtualListTouchCb, LV_EVENT_ALL,
+                        reinterpret_cast<void*>(VIRTUAL_LIST_TASKS));
 
-    taskCardIds_.assign(3, 0);
-    for (int i = 0; i < 3; i++) {
+    taskCardIds_.assign(VirtualListScrollState::VISIBLE_CARDS, 0);
+    for (size_t i = 0; i < VirtualListScrollState::VISIBLE_CARDS; i++) {
         lv_obj_t* card = lv_obj_create(listTasksContainer_);
-        lv_obj_set_size(card, 308, 50);
-        lv_obj_set_pos(card, 0, i * 54);
+        lv_obj_set_size(card, 300, 50);
+        lv_obj_set_pos(card, 0, static_cast<int32_t>(i * 54));
         lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_HEX_CARD), 0);
         lv_obj_set_style_border_color(card, lv_color_hex(COLOR_HEX_SEP), 0);
         lv_obj_set_style_border_width(card, 1, 0);
@@ -506,6 +623,8 @@ void JournalUI::buildLvglUi() {
         lv_obj_set_style_pad_all(card, 4, 0);
         lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
         lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);
 
         lv_obj_t* cb = lv_checkbox_create(card);
         lv_checkbox_set_text(cb, "");
@@ -543,6 +662,7 @@ void JournalUI::buildLvglUi() {
 
         taskCardObjs_.push_back(card);
     }
+    makeScrollbar(listTasksContainer_, taskScrollTrack_, taskScrollThumb_);
 
     // 6. Écran Détail d'une entrée
     screenDetail_ = lv_obj_create(lv_screen_active());
@@ -742,11 +862,15 @@ void JournalUI::updateHomeClockIfNeeded() {
 void JournalUI::updateJournalWidgets() {
     if (journalCardObjs_.empty()) return;
 
+    journalScroll_.setTotalItems(computeFilteredJournalCount());
     const JournalDisplaySnapshot snap = buildJournalSnapshot();
 
     Serial.println("[VJ][UI] Page=JOURNAL");
     Serial.printf("[VJ][UI] QueryResults=%u\n", static_cast<unsigned>(snap.queryResultCount));
     Serial.printf("[VJ][UI] VisibleCards=%u\n", static_cast<unsigned>(snap.visibleCards));
+    Serial.printf("[VJ][UI] Offset=%u Total=%u\n",
+                  static_cast<unsigned>(snap.scrollOffset),
+                  static_cast<unsigned>(snap.filteredEntries));
 
     if (lblJournalTitle_) {
         lv_label_set_text(lblJournalTitle_, snap.headerTitle.c_str());
@@ -811,18 +935,26 @@ void JournalUI::updateJournalWidgets() {
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
+
+    updateScrollbarVisual(journalScrollTrack_, journalScrollThumb_, journalScroll_);
 }
 
 void JournalUI::updateProjectsWidgets() {
     if (!repo_ || !projService_ || projectCardObjs_.empty()) return;
 
     auto projects = projService_->listProjects(true);
+    projectScroll_.setTotalItems(projects.size());
+    const size_t offset = projectScroll_.offset;
+    size_t visibleCount = 0;
+
     for (size_t i = 0; i < projectCardObjs_.size(); i++) {
         lv_obj_t* card = projectCardObjs_[i];
-        if (i < projects.size()) {
+        const size_t pIdx = offset + i;
+        if (pIdx < projects.size()) {
             lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
-            const auto& p = projects[i];
+            const auto& p = projects[pIdx];
             if (i < projectCardIds_.size()) projectCardIds_[i] = p.id;
+            ++visibleCount;
 
             lv_obj_t* lblName = lv_obj_get_child(card, 0);
             std::string nameStr = p.name;
@@ -847,21 +979,45 @@ void JournalUI::updateProjectsWidgets() {
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
+
+    if (lblProjectsSubtitle_) {
+        if (projects.empty()) {
+            lv_label_set_text(lblProjectsSubtitle_, "0 projets");
+        } else if (visibleCount == 1) {
+            std::string sub = std::to_string(offset + 1) + " / " + std::to_string(projects.size());
+            lv_label_set_text(lblProjectsSubtitle_, sub.c_str());
+        } else {
+            std::string sub = std::to_string(offset + 1) + "–" +
+                              std::to_string(offset + visibleCount) + " / " +
+                              std::to_string(projects.size());
+            lv_label_set_text(lblProjectsSubtitle_, sub.c_str());
+        }
+    }
+
+    updateScrollbarVisual(projectScrollTrack_, projectScrollThumb_, projectScroll_);
 }
 
 void JournalUI::updateTasksWidgets() {
-    if (!taskService_ || taskCardObjs_.empty()) return;
+    if (!repo_ || !taskService_ || taskCardObjs_.empty()) return;
 
-    auto tasks = taskService_->listTasks(false, -1, 3);
+    const size_t totalTasks = computeTaskCount();
+    taskScroll_.setTotalItems(totalTasks);
+    const size_t offset = taskScroll_.offset;
+
+    VoiceJournal::EntryFilter taskFilter;
+    taskFilter.type = static_cast<int16_t>(VoiceJournal::EntryType::TASK);
+    const auto taskIds = repo_->queryEntryIds(taskFilter, VirtualListScrollState::VISIBLE_CARDS, offset);
+
     size_t openCount = taskService_->countOpenTasks();
-    lv_label_set_text(lblTasksCount_, (std::to_string(openCount) + " à faire").c_str());
+    size_t visibleCount = 0;
 
     for (size_t i = 0; i < taskCardObjs_.size(); i++) {
         lv_obj_t* card = taskCardObjs_[i];
-        if (i < tasks.size()) {
+        VoiceJournal::JournalEntry t;
+        if (i < taskIds.size() && repo_->getEntry(taskIds[i], t)) {
             lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
-            const auto& t = tasks[i];
             if (i < taskCardIds_.size()) taskCardIds_[i] = t.id;
+            ++visibleCount;
 
             lv_obj_t* cb = lv_obj_get_child(card, 0);
             if (cb) {
@@ -895,6 +1051,18 @@ void JournalUI::updateTasksWidgets() {
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
+
+    if (lblTasksCount_) {
+        std::string label = std::to_string(openCount) + " à faire";
+        if (totalTasks > VirtualListScrollState::VISIBLE_CARDS && visibleCount > 0) {
+            label += " · " + std::to_string(offset + 1) + "–" +
+                     std::to_string(offset + visibleCount) + "/" +
+                     std::to_string(totalTasks);
+        }
+        lv_label_set_text(lblTasksCount_, label.c_str());
+    }
+
+    updateScrollbarVisual(taskScrollTrack_, taskScrollThumb_, taskScroll_);
 }
 
 void JournalUI::updateDetailWidgets() {
@@ -1095,6 +1263,7 @@ void JournalUI::setJournalFilter(int32_t projectId, int16_t type, const String& 
     filterProjectId_ = projectId;
     filterType_ = type;
     filterTitle_ = title;
+    journalScroll_.resetToTop();
     setPage(UiPage::JOURNAL);
 }
 
@@ -1102,6 +1271,7 @@ void JournalUI::clearJournalFilter() {
     filterProjectId_ = -1;
     filterType_ = -1;
     filterTitle_ = "";
+    journalScroll_.resetToTop();
     needsRedraw_ = true;
 #ifdef ARDUINO
     if (currentPage_ == UiPage::JOURNAL) {
@@ -1111,12 +1281,170 @@ void JournalUI::clearJournalFilter() {
 }
 
 void JournalUI::refreshJournal() {
+    journalScroll_.resetToTop();
+    taskScroll_.resetToTop();
+    needsRedraw_ = true;
+#ifdef ARDUINO
+    if (currentPage_ == UiPage::JOURNAL) {
+        updateJournalWidgets();
+    } else if (currentPage_ == UiPage::TASKS) {
+        updateTasksWidgets();
+    }
+#endif
+}
+
+size_t JournalUI::computeFilteredJournalCount() const {
+    if (!repo_ || !repo_->isFileSystemMounted() || !repo_->isInitialized()) {
+        return 0;
+    }
+    if (!hasActiveJournalFilter()) {
+        return repo_->countEntries();
+    }
+    VoiceJournal::EntryFilter filter;
+    filter.projectId = filterProjectId_;
+    filter.type = filterType_;
+    return repo_->queryEntryIds(filter, VoiceJournal::JournalRepository::MAX_CAPACITY, 0).size();
+}
+
+size_t JournalUI::computeTaskCount() const {
+    if (!repo_ || !repo_->isFileSystemMounted() || !repo_->isInitialized()) {
+        return 0;
+    }
+    VoiceJournal::EntryFilter filter;
+    filter.type = static_cast<int16_t>(VoiceJournal::EntryType::TASK);
+    return repo_->queryEntryIds(filter, VoiceJournal::JournalRepository::MAX_CAPACITY, 0).size();
+}
+
+void JournalUI::scrollJournalBy(int delta) {
+    journalScroll_.setTotalItems(computeFilteredJournalCount());
+    if (journalScroll_.scrollBy(delta)) {
+        needsRedraw_ = true;
+#ifdef ARDUINO
+        if (currentPage_ == UiPage::JOURNAL) {
+            updateJournalWidgets();
+        }
+#endif
+    }
+}
+
+void JournalUI::setJournalScrollOffset(size_t offset) {
+    journalScroll_.setTotalItems(computeFilteredJournalCount());
+    if (journalScroll_.setOffset(offset)) {
+        needsRedraw_ = true;
+#ifdef ARDUINO
+        if (currentPage_ == UiPage::JOURNAL) {
+            updateJournalWidgets();
+        }
+#endif
+    }
+}
+
+void JournalUI::resetJournalScroll() {
+    journalScroll_.resetToTop();
     needsRedraw_ = true;
 #ifdef ARDUINO
     if (currentPage_ == UiPage::JOURNAL) {
         updateJournalWidgets();
     }
 #endif
+}
+
+void JournalUI::onJournalListTouchPress(int y) {
+    journalScroll_.setTotalItems(computeFilteredJournalCount());
+    journalScroll_.onTouchPress(y);
+}
+
+bool JournalUI::onJournalListTouchMove(int y) {
+    journalScroll_.setTotalItems(computeFilteredJournalCount());
+    const bool changed = journalScroll_.onTouchMove(y);
+    if (changed) {
+        needsRedraw_ = true;
+    }
+    return changed;
+}
+
+void JournalUI::onJournalListTouchRelease() {
+    journalScroll_.onTouchRelease();
+}
+
+bool JournalUI::onJournalCardClicked(size_t cardIndex) {
+    if (!journalScroll_.consumeClickAllowed()) {
+        return false;
+    }
+    if (cardIndex >= VirtualListScrollState::VISIBLE_CARDS) {
+        return false;
+    }
+
+#ifdef ARDUINO
+    if (cardIndex < journalCardIds_.size() && journalCardIds_[cardIndex] > 0) {
+        showEntryDetail(journalCardIds_[cardIndex]);
+        return true;
+    }
+    return false;
+#else
+    const JournalDisplaySnapshot snap = buildJournalSnapshot();
+    if (cardIndex < snap.cards.size() &&
+        snap.cards[cardIndex].visible &&
+        !snap.cards[cardIndex].readError &&
+        snap.cards[cardIndex].entryId > 0) {
+        showEntryDetail(snap.cards[cardIndex].entryId);
+        return true;
+    }
+    return false;
+#endif
+}
+
+void JournalUI::scrollProjectsBy(int delta) {
+    const size_t total = projService_ ? projService_->listProjects(true).size() : 0;
+    projectScroll_.setTotalItems(total);
+    if (projectScroll_.scrollBy(delta)) {
+        needsRedraw_ = true;
+#ifdef ARDUINO
+        if (currentPage_ == UiPage::PROJECTS) {
+            updateProjectsWidgets();
+        }
+#endif
+    }
+}
+
+std::vector<uint32_t> JournalUI::getVisibleProjectIds() const {
+    std::vector<uint32_t> out;
+    if (!projService_) return out;
+    const auto projects = projService_->listProjects(true);
+    const size_t maxOff = (projects.size() > VirtualListScrollState::VISIBLE_CARDS)
+                              ? (projects.size() - VirtualListScrollState::VISIBLE_CARDS)
+                              : 0;
+    const size_t effOffset = (projectScroll_.offset > maxOff) ? maxOff : projectScroll_.offset;
+    for (size_t i = 0; i < VirtualListScrollState::VISIBLE_CARDS && (effOffset + i) < projects.size(); ++i) {
+        out.push_back(projects[effOffset + i].id);
+    }
+    return out;
+}
+
+void JournalUI::scrollTasksBy(int delta) {
+    taskScroll_.setTotalItems(computeTaskCount());
+    if (taskScroll_.scrollBy(delta)) {
+        needsRedraw_ = true;
+#ifdef ARDUINO
+        if (currentPage_ == UiPage::TASKS) {
+            updateTasksWidgets();
+        }
+#endif
+    }
+}
+
+std::vector<uint32_t> JournalUI::getVisibleTaskIds() const {
+    if (!repo_ || !repo_->isFileSystemMounted() || !repo_->isInitialized()) {
+        return {};
+    }
+    const size_t total = computeTaskCount();
+    const size_t maxOff = (total > VirtualListScrollState::VISIBLE_CARDS)
+                              ? (total - VirtualListScrollState::VISIBLE_CARDS)
+                              : 0;
+    const size_t effOffset = (taskScroll_.offset > maxOff) ? maxOff : taskScroll_.offset;
+    VoiceJournal::EntryFilter filter;
+    filter.type = static_cast<int16_t>(VoiceJournal::EntryType::TASK);
+    return repo_->queryEntryIds(filter, VirtualListScrollState::VISIBLE_CARDS, effOffset);
 }
 
 std::string JournalUI::truncateUtf8Std(const std::string& utf8, size_t maxBytes) {
@@ -1137,7 +1465,7 @@ JournalDisplaySnapshot JournalUI::buildJournalSnapshot() const {
     snap.headerTitle = (snap.filterActive && filterTitle_.length() > 0)
                            ? truncateUtf8Std(std::string(filterTitle_.c_str()), 18)
                            : "Journal";
-    snap.cards.resize(3);
+    snap.cards.resize(VirtualListScrollState::VISIBLE_CARDS);
 
     if (!repo_) {
         snap.littleFsMounted = false;
@@ -1167,22 +1495,44 @@ JournalDisplaySnapshot JournalUI::buildJournalSnapshot() const {
     }
 
     snap.totalEntries = repo_->countEntries();
-    snap.subtitle = std::to_string(snap.totalEntries) +
-                    ((snap.totalEntries == 1) ? " entrée" : " entrées");
 
     VoiceJournal::EntryFilter filter;
     filter.projectId = filterProjectId_;
     filter.type = filterType_;
-    const auto ids = repo_->queryEntryIds(filter, 3, 0);
-    snap.queryResultCount = ids.size();
+
+    const size_t filteredTotal = snap.filterActive
+                                     ? repo_->queryEntryIds(filter, VoiceJournal::JournalRepository::MAX_CAPACITY, 0).size()
+                                     : snap.totalEntries;
+    snap.filteredEntries = filteredTotal;
+    snap.maxScrollOffset = (filteredTotal > VirtualListScrollState::VISIBLE_CARDS)
+                               ? (filteredTotal - VirtualListScrollState::VISIBLE_CARDS)
+                               : 0;
+    snap.scrollOffset = (journalScroll_.offset > snap.maxScrollOffset)
+                            ? snap.maxScrollOffset
+                            : journalScroll_.offset;
+    snap.scrollbarVisible = (filteredTotal > VirtualListScrollState::VISIBLE_CARDS);
 
     if (snap.totalEntries == 0) {
+        snap.subtitle = "0 entrées";
         snap.statusBanner = "Journal vide";
         snap.statusIsError = false;
         return snap;
     }
 
+    if (filteredTotal == 0) {
+        snap.subtitle = "0 entrées";
+        snap.statusBanner = snap.filterActive
+                                ? "Aucun résultat pour ce filtre"
+                                : "Journal vide";
+        snap.statusIsError = false;
+        return snap;
+    }
+
+    const auto ids = repo_->queryEntryIds(filter, VirtualListScrollState::VISIBLE_CARDS, snap.scrollOffset);
+    snap.queryResultCount = ids.size();
+
     if (ids.empty()) {
+        snap.subtitle = "0 entrées";
         snap.statusBanner = snap.filterActive
                                 ? "Aucun résultat pour ce filtre"
                                 : "Journal vide";
@@ -1227,6 +1577,16 @@ JournalDisplaySnapshot JournalUI::buildJournalSnapshot() const {
             cs.entryId = 0;
             cs.visible = false;
         }
+    }
+
+    if (snap.visibleCards == 1) {
+        snap.subtitle = std::to_string(snap.scrollOffset + 1) + " / " + std::to_string(filteredTotal);
+    } else if (snap.visibleCards > 1) {
+        snap.subtitle = std::to_string(snap.scrollOffset + 1) + "–" +
+                        std::to_string(snap.scrollOffset + snap.visibleCards) + " / " +
+                        std::to_string(filteredTotal);
+    } else {
+        snap.subtitle = "0 entrées";
     }
 
     return snap;

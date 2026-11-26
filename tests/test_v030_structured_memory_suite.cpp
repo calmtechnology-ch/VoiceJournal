@@ -878,6 +878,269 @@ void test_recovery_truncate_and_compact_failure_preserves_original() {
     cleanupTestDir(baseFs, true);
 }
 
+void test_journal_scroll_1_3_4_10_detail_filter_and_reset_on_new_note() {
+    NativeFileSystem baseFs("tests_data_journal_scroll");
+    cleanupTestDir(baseFs);
+
+    MockKeyValueStore nvsStore;
+    JournalStorage legacyStorage(&nvsStore);
+    EXPECT_TRUE(legacyStorage.begin());
+
+    JournalRepository repo(&baseFs);
+    EXPECT_TRUE(repo.begin());
+    TimeService ts;
+    ProjectService ps(repo, ts);
+    TaskService taskSvc(repo, ts);
+    SearchService searchSvc(repo, ts);
+    AnalysisService analysisSvc(repo, ps, searchSvc, ts);
+    CommandRouter router(30000, ParserMode::INTELLIGENT);
+    router.setStructuredMemoryEnabled(true);
+    MockVoiceEngine engine;
+    JournalUI ui;
+    ui.attachServices(&repo, &ps, &taskSvc, &ts);
+    VoiceController ctrl(engine, legacyStorage, router);
+    ctrl.attachStructuredMemory(&repo, &ps, &taskSvc, &searchSvc, &analysisSvc, &ts, &ui);
+    ctrl.onViewUpdated([&ui](const JournalViewModel& vm) { ui.updateView(vm); });
+    ui.begin(ctrl.getViewModel());
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // Test 1 : Afficher une observation
+    simulateVoiceCommand(engine, ctrl, "Note, observation 1", 1000);
+    auto snap1 = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap1.totalEntries, static_cast<size_t>(1));
+    EXPECT_EQ(snap1.visibleCards, static_cast<size_t>(1));
+    EXPECT_EQ(snap1.cards[0].entryId, static_cast<uint32_t>(1));
+    EXPECT_EQ(snap1.subtitle, "1 / 1");
+    EXPECT_FALSE(snap1.scrollbarVisible);
+
+    // Test 2 : Afficher trois observations (ordre antichronologique 3, 2, 1)
+    simulateVoiceCommand(engine, ctrl, "Note, observation 2", 2000);
+    simulateVoiceCommand(engine, ctrl, "Note, observation 3", 3000);
+    auto snap3 = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap3.totalEntries, static_cast<size_t>(3));
+    EXPECT_EQ(snap3.visibleCards, static_cast<size_t>(3));
+    EXPECT_EQ(snap3.cards[0].entryId, static_cast<uint32_t>(3));
+    EXPECT_EQ(snap3.cards[1].entryId, static_cast<uint32_t>(2));
+    EXPECT_EQ(snap3.cards[2].entryId, static_cast<uint32_t>(1));
+    EXPECT_EQ(snap3.subtitle, "1–3 / 3");
+    EXPECT_FALSE(snap3.scrollbarVisible);
+
+    // Test 3 : Accéder à une quatrième observation par défilement tactile vertical
+    simulateVoiceCommand(engine, ctrl, "Note, observation 4", 4000);
+    auto snap4Top = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap4Top.totalEntries, static_cast<size_t>(4));
+    EXPECT_EQ(snap4Top.visibleCards, static_cast<size_t>(3));
+    EXPECT_EQ(snap4Top.cards[0].entryId, static_cast<uint32_t>(4));
+    EXPECT_EQ(snap4Top.cards[1].entryId, static_cast<uint32_t>(3));
+    EXPECT_EQ(snap4Top.cards[2].entryId, static_cast<uint32_t>(2));
+    EXPECT_EQ(snap4Top.subtitle, "1–3 / 4");
+    EXPECT_TRUE(snap4Top.scrollbarVisible);
+
+    // Glissement vers le haut (y: 150 -> 110, delta = -40 px >= SCROLL_STEP_PX) -> offset = 1
+    ui.onJournalListTouchPress(150);
+    EXPECT_TRUE(ui.onJournalListTouchMove(110));
+    ui.onJournalListTouchRelease();
+    // Un clic émis juste après un glissement doit être ignoré (distinction glissement / clic)
+    EXPECT_FALSE(ui.onJournalCardClicked(2));
+    EXPECT_EQ(ui.getCurrentPage(), UiPage::JOURNAL);
+
+    auto snap4Bottom = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap4Bottom.scrollOffset, static_cast<size_t>(1));
+    EXPECT_EQ(snap4Bottom.cards[0].entryId, static_cast<uint32_t>(3));
+    EXPECT_EQ(snap4Bottom.cards[1].entryId, static_cast<uint32_t>(2));
+    EXPECT_EQ(snap4Bottom.cards[2].entryId, static_cast<uint32_t>(1));
+    EXPECT_EQ(snap4Bottom.subtitle, "2–4 / 4");
+
+    // Test 5 : Clic franc (sans glissement) sur la 3e carte (ID=1, la 4e observation) -> ouvre le détail
+    ui.onJournalListTouchPress(130);
+    EXPECT_FALSE(ui.onJournalListTouchMove(133)); // micro-mouvement < 10 px = clic
+    ui.onJournalListTouchRelease();
+    EXPECT_TRUE(ui.onJournalCardClicked(2));
+    EXPECT_EQ(ui.getCurrentPage(), UiPage::DETAIL);
+    EXPECT_EQ(ui.getSelectedDetailEntryId(), static_cast<uint32_t>(1));
+
+    // Retour au Journal conserve la position de défilement
+    ui.setPage(UiPage::JOURNAL);
+    EXPECT_EQ(ui.getJournalScrollOffset(), static_cast<size_t>(1));
+
+    // Test 4 : Naviguer parmi dix observations
+    for (int i = 5; i <= 10; ++i) {
+        std::string cmd = "Note, observation " + std::to_string(i);
+        simulateVoiceCommand(engine, ctrl, cmd.c_str(), static_cast<uint32_t>(i * 1000));
+    }
+    // Après enregistrement d'une nouvelle note, retour automatique en haut de la liste
+    EXPECT_EQ(ui.getJournalScrollOffset(), static_cast<size_t>(0));
+    auto snap10Top = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap10Top.totalEntries, static_cast<size_t>(10));
+    EXPECT_EQ(snap10Top.subtitle, "1–3 / 10");
+    EXPECT_EQ(snap10Top.cards[0].entryId, static_cast<uint32_t>(10));
+
+    // Défiler jusqu'en bas (offset = 7 -> entrées 3, 2, 1) et vérifier le bornage
+    ui.scrollJournalBy(20);
+    auto snap10Bottom = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap10Bottom.scrollOffset, static_cast<size_t>(7));
+    EXPECT_EQ(snap10Bottom.subtitle, "8–10 / 10");
+    EXPECT_EQ(snap10Bottom.cards[0].entryId, static_cast<uint32_t>(3));
+    EXPECT_EQ(snap10Bottom.cards[1].entryId, static_cast<uint32_t>(2));
+    EXPECT_EQ(snap10Bottom.cards[2].entryId, static_cast<uint32_t>(1));
+
+    // Ouvrir le détail de l'entrée du milieu (ID=2)
+    ui.onJournalListTouchPress(80);
+    ui.onJournalListTouchRelease();
+    EXPECT_TRUE(ui.onJournalCardClicked(1));
+    EXPECT_EQ(ui.getSelectedDetailEntryId(), static_cast<uint32_t>(2));
+    ui.setPage(UiPage::JOURNAL);
+
+    // Respect des filtres actifs + retour en haut lors du filtrage
+    uint32_t pid = 0;
+    EXPECT_TRUE(ps.createProject("Alpha", {}, pid));
+    for (int i = 1; i <= 5; ++i) {
+        JournalEntry pe;
+        pe.type = EntryType::NOTE;
+        pe.projectId = pid;
+        pe.text = "Alpha obs " + std::to_string(i);
+        EXPECT_TRUE(repo.addEntry(pe));
+    }
+    ui.setJournalFilter(static_cast<int32_t>(pid), -1, "Alpha");
+    EXPECT_EQ(ui.getJournalScrollOffset(), static_cast<size_t>(0));
+    auto snapFiltTop = ui.buildJournalSnapshot();
+    EXPECT_TRUE(snapFiltTop.filterActive);
+    EXPECT_EQ(snapFiltTop.filteredEntries, static_cast<size_t>(5));
+    EXPECT_EQ(snapFiltTop.subtitle, "1–3 / 5");
+    ui.scrollJournalBy(2);
+    auto snapFiltBot = ui.buildJournalSnapshot();
+    EXPECT_EQ(snapFiltBot.scrollOffset, static_cast<size_t>(2));
+    EXPECT_EQ(snapFiltBot.subtitle, "3–5 / 5");
+    EXPECT_EQ(snapFiltBot.cards[2].text, "Alpha obs 1");
+
+    // Enregistrement d'une nouvelle note -> retour en haut (offset = 0)
+    ui.clearJournalFilter();
+    ui.scrollJournalBy(5);
+    EXPECT_EQ(ui.getJournalScrollOffset(), static_cast<size_t>(5));
+    simulateVoiceCommand(engine, ctrl, "Note, nouvelle observation recente", 20000);
+    EXPECT_EQ(ui.getJournalScrollOffset(), static_cast<size_t>(0));
+
+    cleanupTestDir(baseFs, true);
+}
+
+void test_journal_scroll_1000_entries_and_projects_tasks_virtualization() {
+    NativeFileSystem baseFs("tests_data_scroll_1000");
+    cleanupTestDir(baseFs);
+
+    JournalRepository repo(&baseFs);
+    EXPECT_TRUE(repo.begin());
+    TimeService ts;
+    ProjectService ps(repo, ts);
+    TaskService taskSvc(repo, ts);
+
+    // Créer 5 projets (> 3) et 6 tâches (> 3) + 994 notes = 1 000 entrées au total
+    for (int p = 1; p <= 5; ++p) {
+        uint32_t pid = 0;
+        EXPECT_TRUE(ps.createProject("Projet " + std::to_string(p), {}, pid));
+    }
+    for (int t = 1; t <= 6; ++t) {
+        uint32_t tid = 0;
+        EXPECT_TRUE(taskSvc.addTask("Tache numero " + std::to_string(t), 1, 0, tid));
+    }
+    for (int n = 7; n <= 1000; ++n) {
+        JournalEntry e;
+        e.type = EntryType::NOTE;
+        e.text = "Observation virtuelle #" + std::to_string(n);
+        EXPECT_TRUE(repo.addEntry(e));
+    }
+    EXPECT_EQ(repo.countEntries(), static_cast<size_t>(1000));
+
+    JournalUI ui;
+    ui.attachServices(&repo, &ps, &taskSvc, &ts);
+    JournalViewModel vm;
+    vm.noteCount = 1000;
+    ui.begin(vm);
+
+    // Test 6 : Défilement sur 1 000 entrées avec réutilisation stricte de 3 cartes
+    auto snapTop = ui.buildJournalSnapshot();
+    EXPECT_EQ(snapTop.totalEntries, static_cast<size_t>(1000));
+    EXPECT_EQ(snapTop.cards.size(), static_cast<size_t>(3));
+    EXPECT_EQ(snapTop.visibleCards, static_cast<size_t>(3));
+    EXPECT_EQ(snapTop.subtitle, "1–3 / 1000");
+    EXPECT_EQ(snapTop.cards[0].entryId, static_cast<uint32_t>(1000));
+    EXPECT_EQ(snapTop.cards[2].entryId, static_cast<uint32_t>(998));
+    EXPECT_TRUE(snapTop.scrollbarVisible);
+
+    // Milieu (offset = 500 -> entrées 500, 499, 498)
+    ui.setJournalScrollOffset(500);
+    auto snapMid = ui.buildJournalSnapshot();
+    EXPECT_EQ(snapMid.cards.size(), static_cast<size_t>(3));
+    EXPECT_EQ(snapMid.subtitle, "501–503 / 1000");
+    EXPECT_EQ(snapMid.cards[0].entryId, static_cast<uint32_t>(500));
+    EXPECT_EQ(snapMid.cards[1].entryId, static_cast<uint32_t>(499));
+    EXPECT_EQ(snapMid.cards[2].entryId, static_cast<uint32_t>(498));
+
+    // Fin (offset = 997 -> entrées 3, 2, 1)
+    ui.setJournalScrollOffset(5000); // borné à 997
+    auto snapEnd = ui.buildJournalSnapshot();
+    EXPECT_EQ(snapEnd.scrollOffset, static_cast<size_t>(997));
+    EXPECT_EQ(snapEnd.subtitle, "998–1000 / 1000");
+    EXPECT_EQ(snapEnd.cards[0].entryId, static_cast<uint32_t>(3));
+    EXPECT_EQ(snapEnd.cards[1].entryId, static_cast<uint32_t>(2));
+    EXPECT_EQ(snapEnd.cards[2].entryId, static_cast<uint32_t>(1));
+
+    // Ouvrir le détail de l'entrée #1 (tout en bas des 1 000 entrées)
+    ui.onJournalListTouchPress(120);
+    ui.onJournalListTouchRelease();
+    EXPECT_TRUE(ui.onJournalCardClicked(2));
+    EXPECT_EQ(ui.getSelectedDetailEntryId(), static_cast<uint32_t>(1));
+
+    // Test 7 : Stabilité mémoire — 200 pas de défilement successifs sans croissance de widgets/cartes
+    ui.setPage(UiPage::JOURNAL);
+    ui.resetJournalScroll();
+    for (int step = 0; step < 200; ++step) {
+        ui.scrollJournalBy(5);
+        auto s = ui.buildJournalSnapshot();
+        EXPECT_EQ(s.cards.size(), static_cast<size_t>(3));
+        EXPECT_EQ(s.visibleCards, static_cast<size_t>(3));
+    }
+
+    // Géométrie de la barre de défilement pour 1 000 entrées
+    VirtualListScrollState sbState;
+    sbState.setTotalItems(1000);
+    int ty0 = 0, th0 = 0;
+    sbState.computeScrollbarGeometry(154, 18, ty0, th0);
+    EXPECT_EQ(th0, 18);
+    EXPECT_EQ(ty0, 0);
+    sbState.setOffset(997);
+    int tyEnd = 0, thEnd = 0;
+    sbState.computeScrollbarGeometry(154, 18, tyEnd, thEnd);
+    EXPECT_EQ(thEnd, 18);
+    EXPECT_EQ(tyEnd, 154 - 18);
+
+    // Vérification Projets (> 3 éléments accessibles par défilement)
+    auto projTop = ui.getVisibleProjectIds();
+    EXPECT_EQ(projTop.size(), static_cast<size_t>(3));
+    EXPECT_EQ(projTop[0], static_cast<uint32_t>(1));
+    EXPECT_EQ(projTop[2], static_cast<uint32_t>(3));
+    ui.scrollProjectsBy(2);
+    auto projBot = ui.getVisibleProjectIds();
+    EXPECT_EQ(projBot.size(), static_cast<size_t>(3));
+    EXPECT_EQ(projBot[0], static_cast<uint32_t>(3));
+    EXPECT_EQ(projBot[1], static_cast<uint32_t>(4));
+    EXPECT_EQ(projBot[2], static_cast<uint32_t>(5));
+
+    // Vérification Tâches (> 3 éléments accessibles par défilement, ordre antichronologique)
+    auto taskTop = ui.getVisibleTaskIds();
+    EXPECT_EQ(taskTop.size(), static_cast<size_t>(3));
+    EXPECT_EQ(taskTop[0], static_cast<uint32_t>(6));
+    EXPECT_EQ(taskTop[2], static_cast<uint32_t>(4));
+    ui.scrollTasksBy(3);
+    auto taskBot = ui.getVisibleTaskIds();
+    EXPECT_EQ(taskBot.size(), static_cast<size_t>(3));
+    EXPECT_EQ(taskBot[0], static_cast<uint32_t>(3));
+    EXPECT_EQ(taskBot[1], static_cast<uint32_t>(2));
+    EXPECT_EQ(taskBot[2], static_cast<uint32_t>(1));
+
+    cleanupTestDir(baseFs, true);
+}
+
 } // namespace
 
 V030Report runV030StructuredMemorySuite() {
@@ -900,6 +1163,8 @@ V030Report runV030StructuredMemorySuite() {
     runSubTest("Recovery: echec montage LittleFS, echec ecriture et echec getEntry", test_recovery_simulated_write_and_mount_failures);
     runSubTest("Recovery: suppression confirmee preserve taches/projets et reset filtre", test_recovery_clear_preserves_tasks_and_projects_and_filter_reset);
     runSubTest("Recovery: echec truncate et compactage preserve le journal original", test_recovery_truncate_and_compact_failure_preserves_original);
+    runSubTest("JournalScroll: 1, 3, 4, 10 observations, glissement vs clic, filtre et retour en haut", test_journal_scroll_1_3_4_10_detail_filter_and_reset_on_new_note);
+    runSubTest("JournalScroll: 1000 entrees virtualisees, stabilite memoire, Projets et Taches > 3", test_journal_scroll_1000_entries_and_projects_tasks_virtualization);
 
     std::printf("\nTotal v0.3.0 Tests : %d PASS, %d FAIL\n", s_v030Passed, s_v030Failed);
 
