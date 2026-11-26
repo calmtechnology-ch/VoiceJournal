@@ -26,6 +26,13 @@
     #define LV_MEM_SIZE (48U * 1024U)
     #define LV_MEM_POOL_EXPAND_SIZE 0
     #define LV_MEM_ADR 0
+    #ifndef VJ_DIAG_LVGL_PSRAM_POOL
+        #define VJ_DIAG_LVGL_PSRAM_POOL 1
+    #endif
+    #if defined(ESP32) && (VJ_DIAG_LVGL_PSRAM_POOL == 1)
+        #define LV_MEM_POOL_INCLUDE <esp_heap_caps.h>
+        #define LV_MEM_POOL_ALLOC(size) heap_caps_malloc((size), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    #endif
 #endif
 
 /*====================

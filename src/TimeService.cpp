@@ -40,12 +40,15 @@ void TimeService::begin(bool startNtp) {
 void TimeService::update() {
 #ifdef ARDUINO
     uint32_t nowMs = millis();
-    if (ntpStarted_ && !ntpSynced_ && (nowMs - lastNtpCheckMs_ > 5000)) {
+    if (!ntpSynced_ && (nowMs - lastNtpCheckMs_ > 5000)) {
         lastNtpCheckMs_ = nowMs;
         time_t now = 0;
         std::time(&now);
-        // Année 2024 = ~1704067200
+        // Année 2024 = ~1704067200 (heure synchronisée par VoiceKit ou SNTP)
         if (now > 1704067200) {
+            // Réappliquer le fuseau Europe/Zurich (VoiceKit appelle configTime(0, 0, ...) en UTC)
+            setenv("TZ", TZ_ZURICH, 1);
+            tzset();
             ntpSynced_ = true;
             syncSystemToRtc();
         }

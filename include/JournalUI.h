@@ -203,6 +203,7 @@ private:
     lv_obj_t* lblHomeProject_ = nullptr;
     lv_obj_t* lblHomeBigCounter_ = nullptr;
     lv_obj_t* lblHomeCounterDesc_ = nullptr;
+    lv_obj_t* lblHomeStatus_ = nullptr;
     lv_obj_t* btnHomeTalk_ = nullptr;
     lv_obj_t* lblHomeTalk_ = nullptr;
     lv_obj_t* btnHomeStop_ = nullptr;

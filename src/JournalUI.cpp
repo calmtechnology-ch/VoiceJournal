@@ -12,8 +12,10 @@
 #ifdef ARDUINO
 #include <M5Unified.h>
 
+#if VJ_DIAG_ENABLE_LVGL
 // Buffer partiel DMA dans la RAM interne (20 lignes = 320 * 20 pixels RGB565 = 12 800 octets)
 alignas(4) static uint8_t s_lvglDrawBuf[JournalUI::SCREEN_W * 20 * sizeof(uint16_t)];
+#endif
 static JournalUI* s_activeUi = nullptr;
 #endif
 
@@ -103,6 +105,21 @@ static void onStopBtnClicked(lv_event_t* e) {
 }
 
 void JournalUI::buildLvglUi() {
+#if !VJ_DIAG_ENABLE_LVGL
+    // Mode diagnostic sans LVGL : écran minimal M5.Display
+    M5.Display.waitDisplay();
+    M5.Display.setRotation(0);
+    M5.Display.setBrightness(220);
+    M5.Display.fillScreen(COLOR_HEX_BG);
+    M5.Display.setTextColor(COLOR_HEX_TXT_PRI, COLOR_HEX_BG);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(10, 12);
+    M5.Display.println("VoiceJournal v0.3.0");
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(10, 40);
+    M5.Display.println("Mode diagnostic (LVGL OFF)");
+    return;
+#else
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return static_cast<uint32_t>(millis()); });
 
@@ -211,7 +228,15 @@ void JournalUI::buildLvglUi() {
     lv_label_set_text(lblHomeCounterDesc_, "entrées en mémoire");
     lv_obj_set_style_text_font(lblHomeCounterDesc_, &font_french_14, 0);
     lv_obj_set_style_text_color(lblHomeCounterDesc_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
-    lv_obj_set_pos(lblHomeCounterDesc_, 88, 106);
+    lv_obj_set_pos(lblHomeCounterDesc_, 88, 102);
+
+    lblHomeStatus_ = lv_label_create(screenHome_);
+    lv_label_set_text(lblHomeStatus_, "Initialisation...");
+    lv_obj_set_style_text_font(lblHomeStatus_, &font_french_12, 0);
+    lv_obj_set_style_text_color(lblHomeStatus_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
+    lv_label_set_long_mode(lblHomeStatus_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_size(lblHomeStatus_, 300, 18);
+    lv_obj_set_pos(lblHomeStatus_, 4, 126);
 
     // Boutons d'action : PARLER (largeur 196) et STOP (largeur 100)
     btnHomeTalk_ = lv_button_create(screenHome_);
@@ -507,6 +532,7 @@ void JournalUI::buildLvglUi() {
     lv_label_set_text(lblVStop, "STOP");
     lv_obj_set_style_text_font(lblVStop, &font_french_bold_16, 0);
     lv_obj_center(lblVStop);
+#endif
 }
 
 void JournalUI::updateHomeWidgets() {
@@ -532,6 +558,14 @@ void JournalUI::updateHomeWidgets() {
         lv_label_set_text(lblHomeProject_, pName.c_str());
     } else {
         lv_label_set_text(lblHomeProject_, "");
+    }
+
+    if (lblHomeStatus_) {
+        lv_label_set_text(lblHomeStatus_, view_.statusMessage.c_str());
+        lv_obj_set_style_text_color(lblHomeStatus_,
+            (view_.state == JournalState::ERROR_STATE) ? lv_color_hex(COLOR_HEX_PROBLEM) :
+            (view_.state == JournalState::DISCONNECTED) ? lv_color_hex(COLOR_HEX_DUE) :
+            lv_color_hex(COLOR_HEX_TXT_SEC), 0);
     }
 
     if (view_.state == JournalState::LISTENING) {
@@ -773,6 +807,22 @@ void JournalUI::updateView(const JournalViewModel& view) {
 
 void JournalUI::renderIfNeeded() {
 #ifdef ARDUINO
+#if !VJ_DIAG_ENABLE_LVGL
+    if (needsRedraw_) {
+        M5.Display.fillRect(0, 60, 320, 180, COLOR_HEX_BG);
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(COLOR_HEX_TXT_PRI, COLOR_HEX_BG);
+        M5.Display.setCursor(10, 70);
+        M5.Display.printf("Etat: %s\n", journalStateToUiLabel(view_.state));
+        M5.Display.setCursor(10, 100);
+        M5.Display.printf("IA: %s\n", aiProviderToDisplayName(view_.provider));
+        M5.Display.setTextSize(1);
+        M5.Display.setCursor(10, 136);
+        M5.Display.println(toDisplayAscii(view_.statusMessage).c_str());
+        needsRedraw_ = false;
+    }
+    return;
+#endif
     if (needsRedraw_) {
         switch (currentPage_) {
             case UiPage::HOME:     updateHomeWidgets(); break;

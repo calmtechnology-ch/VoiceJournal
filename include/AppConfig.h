@@ -50,6 +50,32 @@ static constexpr uint32_t SERIAL_BAUD_RATE        = 115200;
 static constexpr bool     MEMORY_DIAG_ENABLED     = true;
 static constexpr uint32_t MEMORY_DIAG_INTERVAL_MS = 30000;
 
+// Options temporaires de diagnostic et d'isolation v0.3.0 (surchargeables via build_flags)
+#ifndef VJ_DIAG_ENABLE_LVGL
+    #define VJ_DIAG_ENABLE_LVGL 1
+#endif
+#ifndef VJ_DIAG_ENABLE_LITTLEFS
+    #define VJ_DIAG_ENABLE_LITTLEFS 1
+#endif
+#ifndef VJ_DIAG_ENABLE_REPO
+    #define VJ_DIAG_ENABLE_REPO 1
+#endif
+#ifndef VJ_DIAG_ENABLE_MIGRATION
+    #define VJ_DIAG_ENABLE_MIGRATION 1
+#endif
+#ifndef VJ_DIAG_ENABLE_TIMESERVICE
+    #define VJ_DIAG_ENABLE_TIMESERVICE 1
+#endif
+#ifndef VJ_DIAG_ENABLE_TIMESERVICE_NTP
+    #define VJ_DIAG_ENABLE_TIMESERVICE_NTP 0
+#endif
+#ifndef VJ_DIAG_ENABLE_STRUCTURED_SERVICES
+    #define VJ_DIAG_ENABLE_STRUCTURED_SERVICES 1
+#endif
+#ifndef VJ_DIAG_LVGL_PSRAM_POOL
+    #define VJ_DIAG_LVGL_PSRAM_POOL 1
+#endif
+
 // Consigne systeme de session vocale (OpenAI Realtime / Gemini Live) pour VoiceJournal (mode non conversationnel)
 // Evite qu'un tour audio STT ne declenche une longue reponse vocale parasite avant askAi().
 static constexpr const char* VOICE_SYSTEM_INSTRUCTION =
