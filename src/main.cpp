@@ -202,38 +202,113 @@ void processSerialCommand(const char *line, CommandRouter &router) {
                        VoiceJournal::Parser::PHRASE_COUNT)
                        .c_str());
   } else if (cmdStr == "JOURNAL_STATUS") {
+    const bool fsMounted = s_fs.isMounted();
+    const bool repoReady = s_repo.isInitialized();
+    const std::string lastErr =
+        !fsMounted ? s_fs.getLastError() : s_repo.getLastError();
     Serial.println(VoiceJournal::Protocol::formatJournalStatusJson(
-                       AppConfig::APP_VERSION, s_repo.countEntries(),
+                       AppConfig::APP_VERSION,
+                       repoReady ? s_repo.countEntries() : 0,
                        s_repo.capacity(),
-                       s_projectService.listProjects().size(),
-                       s_taskService.countOpenTasks(), s_repo.getUsedBytes(),
-                       s_repo.getTotalBytes(), s_timeService.isTimeReliable(),
-                       s_projectService.getCurrentProjectName())
+                       repoReady ? s_projectService.listProjects().size() : 0,
+                       repoReady ? s_taskService.countOpenTasks() : 0,
+                       fsMounted ? s_repo.getUsedBytes() : 0,
+                       fsMounted ? s_repo.getTotalBytes() : 0,
+                       s_timeService.isTimeReliable(),
+                       repoReady ? s_projectService.getCurrentProjectName() : "",
+                       s_controller.isStructuredMemoryMode() ? "LITTLEFS"
+                                                             : "LEGACY_NVS",
+                       s_storage.isInitialized(), s_storage.count(), fsMounted,
+                       repoReady, s_repo.getReadErrorCount(),
+                       s_repo.getWriteErrorCount(), lastErr)
                        .c_str());
+  } else if (cmdStr == "FORMAT_LITTLEFS_CONFIRM") {
+    // COR-ST05 : Procédure explicite et sécurisée de première initialisation (jamais automatique)
+    if (s_fs.isMounted() && s_fs.exists(VoiceJournal::JournalRepository::LOG_PATH)) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         "FORMAT_REFUSED",
+                         "Partition LittleFS deja initialisee : donnees preservees")
+                         .c_str());
+    } else if (!s_fs.formatExplicitly()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         "FORMAT_FAILED", s_fs.getLastError())
+                         .c_str());
+    } else if (!s_repo.begin()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         "REPO_INIT_FAILED", s_repo.getLastError())
+                         .c_str());
+    } else {
+      Serial.println("[VJ][STORAGE] Formatage explicite LittleFS OK");
+#if VJ_DIAG_ENABLE_MIGRATION
+      if (s_storage.getStore()) {
+        auto mig = VoiceJournal::StorageMigration::migrate(s_storage.getStore(),
+                                                           s_repo);
+        Serial.printf("[VJ][MIG] %s (notes migrees=%u)\n",
+                      mig.diagnostic.c_str(),
+                      static_cast<unsigned>(mig.notesMigrated));
+      }
+#endif
+      s_router.setStructuredMemoryEnabled(true);
+      s_controller.setStructuredMemoryMode(true);
+      s_ui.refreshJournal();
+      Serial.println("{\"command\":\"FORMAT_LITTLEFS_CONFIRM\",\"status\":\"OK\"}");
+    }
   } else if (cmdStr.startsWith("LIST_ENTRIES")) {
+    if (!s_repo.isInitialized()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         s_fs.isMounted() ? "REPO_NOT_INITIALIZED"
+                                          : "LITTLEFS_NOT_MOUNTED",
+                         s_fs.isMounted() ? s_repo.getLastError()
+                                          : "LittleFS non monte")
+                         .c_str());
+      return;
+    }
     VoiceJournal::EntryFilter ef;
     auto ids = s_repo.queryEntryIds(ef, 20);
     Serial.println("[");
+    bool first = true;
     for (size_t i = 0; i < ids.size(); i++) {
       VoiceJournal::JournalEntry e;
       if (s_repo.getEntry(ids[i], e)) {
-        if (i > 0)
+        if (!first)
           Serial.println(",");
+        first = false;
         Serial.print(VoiceJournal::Protocol::formatEntryJson(e).c_str());
+      } else {
+        Serial.printf("[VJ][STORAGE] LIST_ENTRIES ReadFail ID=%u Reason=%s\n",
+                      static_cast<unsigned>(ids[i]),
+                      s_repo.getLastError().c_str());
       }
     }
     Serial.println("\n]");
   } else if (cmdStr.startsWith("GET_ENTRY ")) {
+    if (!s_repo.isInitialized()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         s_fs.isMounted() ? "REPO_NOT_INITIALIZED"
+                                          : "LITTLEFS_NOT_MOUNTED",
+                         s_fs.isMounted() ? s_repo.getLastError()
+                                          : "LittleFS non monte")
+                         .c_str());
+      return;
+    }
     uint32_t id = static_cast<uint32_t>(cmdStr.substring(10).toInt());
     VoiceJournal::JournalEntry e;
     if (s_repo.getEntry(id, e)) {
       Serial.println(VoiceJournal::Protocol::formatEntryJson(e).c_str());
     } else {
       Serial.println(VoiceJournal::Protocol::formatErrorJson(
-                         "NOT_FOUND", "Entree introuvable")
+                         s_repo.getLastError().empty() ? "NOT_FOUND"
+                                                       : s_repo.getLastError(),
+                         "Entree introuvable ou illisible")
                          .c_str());
     }
   } else if (cmdStr == "LIST_PROJECTS") {
+    if (!s_repo.isInitialized()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         "REPO_NOT_INITIALIZED", "Repository non initialise")
+                         .c_str());
+      return;
+    }
     auto projs = s_projectService.listProjects(false);
     Serial.println("[");
     for (size_t i = 0; i < projs.size(); i++) {
@@ -243,6 +318,12 @@ void processSerialCommand(const char *line, CommandRouter &router) {
     }
     Serial.println("\n]");
   } else if (cmdStr == "LIST_TASKS") {
+    if (!s_repo.isInitialized()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         "REPO_NOT_INITIALIZED", "Repository non initialise")
+                         .c_str());
+      return;
+    }
     auto tasks = s_taskService.listTasks(false, -1, 50);
     Serial.println("[");
     for (size_t i = 0; i < tasks.size(); i++) {
@@ -252,17 +333,28 @@ void processSerialCommand(const char *line, CommandRouter &router) {
     }
     Serial.println("\n]");
   } else if (cmdStr == "EXPORT_JOURNAL") {
+    if (!s_repo.isInitialized()) {
+      Serial.println(VoiceJournal::Protocol::formatErrorJson(
+                         s_fs.isMounted() ? "REPO_NOT_INITIALIZED"
+                                          : "LITTLEFS_NOT_MOUNTED",
+                         s_fs.isMounted() ? s_repo.getLastError()
+                                          : "LittleFS non monte")
+                         .c_str());
+      return;
+    }
     Serial.println("{\"command\":\"EXPORT_START\",\"version\":\"0.3.0\"}");
     VoiceJournal::EntryFilter ef;
     auto ids = s_repo.queryEntryIds(ef, 1000);
+    size_t exported = 0;
     for (uint32_t id : ids) {
       VoiceJournal::JournalEntry e;
       if (s_repo.getEntry(id, e)) {
         Serial.println(VoiceJournal::Protocol::formatEntryJson(e).c_str());
+        ++exported;
       }
     }
     Serial.println("{\"command\":\"EXPORT_END\",\"count\":" +
-                   String(static_cast<unsigned>(ids.size())) + "}");
+                   String(static_cast<unsigned>(exported)) + "}");
   } else if (cmdStr == "PARSER_HELP") {
     Serial.println(VoiceJournal::Protocol::formatParserHelpJson().c_str());
   } else {
@@ -343,15 +435,18 @@ void setup() {
   }
   logBootMemory(3, "AFTER_NVS", millis() - t0);
 
-  // 3. Montage LittleFS et initialisation JournalRepository
+  // 3. Montage LittleFS et initialisation JournalRepository (COR-ST05)
   t0 = millis();
 #if VJ_DIAG_ENABLE_LITTLEFS
   bool fsOk = s_fs.begin();
   if (fsOk) {
-    Serial.println("[VJ][FS] LittleFS monte avec succes");
+    Serial.println("[VJ][STORAGE] Backend=LITTLEFS");
+    Serial.println("[VJ][STORAGE] Mounted=YES");
   } else {
-    Serial.println(
-        "[VJ][WARN] Echec montage LittleFS (non formate automatiquement)");
+    Serial.println("[VJ][STORAGE] Backend=LITTLEFS");
+    Serial.println("[VJ][STORAGE] Mounted=NO");
+    Serial.println("[VJ][WARN] LittleFS indisponible (non formate automatiquement). "
+                   "Commande serie explicite si partition vierge : FORMAT_LITTLEFS_CONFIRM");
   }
 #else
   bool fsOk = false;
@@ -360,16 +455,23 @@ void setup() {
   logBootMemory(4, "AFTER_LITTLEFS", millis() - t0);
 
   t0 = millis();
+  bool repoOk = false;
 #if VJ_DIAG_ENABLE_LITTLEFS && VJ_DIAG_ENABLE_REPO
   if (fsOk) {
-    if (s_repo.begin()) {
-      Serial.printf(
-          "[VJ][REPO] Repository initialise (%u entrees en memoire)\n",
-          static_cast<unsigned>(s_repo.countEntries()));
+    repoOk = s_repo.begin();
+    if (repoOk) {
+      Serial.println("[VJ][STORAGE] RepositoryReady=YES");
+      const size_t entryCount = s_repo.countEntries();
+      Serial.printf("[VJ][STORAGE] Count=%u%s\n",
+                    static_cast<unsigned>(entryCount),
+                    (entryCount == 0) ? " (Journal vide)" : "");
     } else {
-      Serial.printf("[VJ][ERROR] Echec init repository : %s\n",
+      Serial.println("[VJ][STORAGE] RepositoryReady=NO");
+      Serial.printf("[VJ][ERROR] Journal endommage / echec init repository : %s\n",
                     s_repo.getLastError().c_str());
     }
+  } else {
+    Serial.println("[VJ][STORAGE] RepositoryReady=NO");
   }
 #else
   Serial.println("[VJ][DIAG] JournalRepository desactive");
@@ -399,9 +501,10 @@ void setup() {
 #endif
   logBootMemory(7, "AFTER_MIGRATION", millis() - t0);
 
-  // 6. Configuration du routeur et liaison des services
+  // 6. Configuration du routeur et liaison des services (COR-ST01 / COR-ST05)
 #if VJ_DIAG_ENABLE_STRUCTURED_SERVICES
-  s_router.setStructuredMemoryEnabled(true);
+  // N'activer les commandes mémoire structurée dans le routeur que si le repository est prêt
+  s_router.setStructuredMemoryEnabled(repoOk);
   s_ui.attachServices(
 #if VJ_DIAG_ENABLE_REPO
       &s_repo,
@@ -415,6 +518,7 @@ void setup() {
       nullptr
 #endif
   );
+  // VoiceController reste en mode structuré (source unique LittleFS, jamais de bascule silencieuse NVS)
   s_controller.attachStructuredMemory(
 #if VJ_DIAG_ENABLE_REPO
       &s_repo,
@@ -430,7 +534,8 @@ void setup() {
       &s_ui);
 #else
   s_router.setStructuredMemoryEnabled(false);
-  Serial.println("[VJ][DIAG] Services structures desactives");
+  s_controller.setStructuredMemoryMode(false);
+  Serial.println("[VJ][DIAG] Mode legacy NVS explicitement active");
 #endif
 
   s_controller.onViewUpdated([](const JournalViewModel &vm) {
@@ -582,6 +687,7 @@ void loop() {
     s_ui.setPage(UiPage::TASKS);
     break;
   case TouchAction::RESOLVE_ENTRY: {
+    if (!s_repo.isInitialized()) break;
     uint32_t eid = s_ui.getSelectedDetailEntryId();
     VoiceJournal::JournalEntry entry;
     if (s_repo.getEntry(eid, entry)) {
@@ -601,6 +707,7 @@ void loop() {
     break;
   }
   case TouchAction::READ_ENTRY: {
+    if (!s_repo.isInitialized()) break;
     uint32_t eid = s_ui.getSelectedDetailEntryId();
     VoiceJournal::JournalEntry entry;
     if (s_repo.getEntry(eid, entry)) {

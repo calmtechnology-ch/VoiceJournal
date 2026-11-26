@@ -13,7 +13,11 @@
 #include "TimeService.h"
 #include "StorageMigration.h"
 #include "MockKeyValueStore.h"
+#include "MockVoiceEngine.h"
 #include "CommandRouter.h"
+#include "VoiceController.h"
+#include "JournalUI.h"
+#include "SerialParserProtocol.h"
 #include <cstdio>
 #include <cassert>
 #include <cstring>
@@ -412,6 +416,456 @@ void test_command_router_v030() {
     EXPECT_TRUE(r6.isExecutable);
 }
 
+// =============================================================================
+// 9. Tests Storage & Display Recovery (COR-ST01 .. COR-ST07, Section 10)
+// =============================================================================
+
+class FaultFileHandle final : public IFileHandle {
+public:
+    FaultFileHandle(IFileHandle* inner, bool failWrite, bool failRead, bool failTrunc)
+        : inner_(inner), failWrite_(failWrite), failRead_(failRead), failTrunc_(failTrunc) {}
+    ~FaultFileHandle() override { delete inner_; }
+
+    size_t read(uint8_t* buf, size_t size) override {
+        if (failRead_) return 0;
+        return inner_->read(buf, size);
+    }
+    size_t write(const uint8_t* buf, size_t size) override {
+        if (failWrite_) return 0;
+        return inner_->write(buf, size);
+    }
+    bool seek(size_t pos) override { return inner_->seek(pos); }
+    size_t position() override { return inner_->position(); }
+    size_t size() override { return inner_->size(); }
+    void flush() override { inner_->flush(); }
+    void close() override { inner_->close(); }
+    bool truncate(size_t newSize) override {
+        if (failTrunc_) return false;
+        return inner_->truncate(newSize);
+    }
+
+private:
+    IFileHandle* inner_;
+    bool failWrite_;
+    bool failRead_;
+    bool failTrunc_;
+};
+
+class FaultInjectingFileSystem final : public IFileSystem {
+public:
+    explicit FaultInjectingFileSystem(IFileSystem* inner) : inner_(inner) {}
+
+    bool mounted = true;
+    bool failAllWrites = false;
+    bool failTmpWrites = false;
+    bool failReads = false;
+    bool failTruncate = false;
+
+    bool isMounted() const override { return mounted; }
+    bool exists(const char* path) override { return mounted && inner_->exists(path); }
+    bool remove(const char* path) override { return mounted && inner_->remove(path); }
+    bool rename(const char* oldPath, const char* newPath) override {
+        return mounted && inner_->rename(oldPath, newPath);
+    }
+    size_t fileSize(const char* path) override { return mounted ? inner_->fileSize(path) : 0; }
+    size_t totalBytes() override { return mounted ? inner_->totalBytes() : 0; }
+    size_t usedBytes() override { return mounted ? inner_->usedBytes() : 0; }
+
+    IFileHandle* open(const char* path, const char* mode) override {
+        if (!mounted) return nullptr;
+        IFileHandle* h = inner_->open(path, mode);
+        if (!h) return nullptr;
+        const bool isTmp = (path && std::strstr(path, ".tmp") != nullptr);
+        const bool fw = failAllWrites || (failTmpWrites && isTmp);
+        return new FaultFileHandle(h, fw, failReads, failTruncate);
+    }
+
+private:
+    IFileSystem* inner_;
+};
+
+void simulateVoiceCommand(MockVoiceEngine& engine, VoiceController& ctrl, const char* text, uint32_t tMs) {
+    setMockMillis(tMs);
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tMs));
+    const uint32_t turn = engine.activeTurnId;
+    EXPECT_TRUE(ctrl.onTalkButtonPressed(tMs + 200));
+    engine.simulateTranscription(text, true, turn);
+    ctrl.update(tMs + 300);
+    // Consommer l'annonce TTS éventuelle et revenir à READY
+    if (ctrl.getState() == JournalState::SPEAKING) {
+        engine.simulateSpeechFinished();
+        ctrl.update(tMs + 400);
+    }
+}
+
+void test_recovery_add_1_2_3_read_state_nav_reboot_and_list() {
+    NativeFileSystem baseFs("tests_data_recovery_flow");
+    cleanupTestDir(baseFs);
+
+    MockKeyValueStore nvsStore;
+    JournalStorage legacyStorage(&nvsStore);
+    EXPECT_TRUE(legacyStorage.begin());
+    EXPECT_EQ(legacyStorage.count(), static_cast<size_t>(0));
+
+    {
+        JournalRepository repo(&baseFs);
+        EXPECT_TRUE(repo.begin());
+        TimeService ts;
+        ProjectService ps(repo, ts);
+        TaskService taskSvc(repo, ts);
+        SearchService searchSvc(repo, ts);
+        AnalysisService analysisSvc(repo, ps, searchSvc, ts);
+
+        CommandRouter router(30000, ParserMode::INTELLIGENT);
+        router.setStructuredMemoryEnabled(true);
+        MockVoiceEngine engine;
+        JournalUI ui;
+        ui.attachServices(&repo, &ps, &taskSvc, &ts);
+
+        VoiceController ctrl(engine, legacyStorage, router);
+        ctrl.attachStructuredMemory(&repo, &ps, &taskSvc, &searchSvc, &analysisSvc, &ts, &ui);
+        ctrl.onViewUpdated([&ui](const JournalViewModel& vm) { ui.updateView(vm); });
+        ui.begin(ctrl.getViewModel());
+        ctrl.attachCallbacks();
+        engine.simulateReady();
+
+        // Journal initialement vide
+        auto snap0 = ui.buildJournalSnapshot();
+        EXPECT_EQ(snap0.totalEntries, static_cast<size_t>(0));
+        EXPECT_EQ(snap0.visibleCards, static_cast<size_t>(0));
+        EXPECT_EQ(snap0.statusBanner, "Journal vide");
+        EXPECT_FALSE(snap0.statusIsError);
+
+        // 1. Ajouter une première note -> Compteur 1, carte visible, NVS intacte (0)
+        simulateVoiceCommand(engine, ctrl, "Note, première mesure 24 degrés", 1000);
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(1));
+        EXPECT_EQ(repo.countEntries(), static_cast<size_t>(1));
+        EXPECT_EQ(legacyStorage.count(), static_cast<size_t>(0)); // COR-ST01 : aucune double écriture NVS
+        EXPECT_EQ(ui.getCurrentPage(), UiPage::JOURNAL);
+        auto snap1 = ui.buildJournalSnapshot();
+        EXPECT_EQ(snap1.queryResultCount, static_cast<size_t>(1));
+        EXPECT_EQ(snap1.visibleCards, static_cast<size_t>(1));
+        EXPECT_EQ(snap1.cards[0].entryId, static_cast<uint32_t>(1));
+
+        // 2. Ajouter une deuxième note -> Compteur 2 et deux cartes visibles
+        simulateVoiceCommand(engine, ctrl, "Note, deuxième mesure tension stable", 2000);
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(2));
+        auto snap2 = ui.buildJournalSnapshot();
+        EXPECT_EQ(snap2.queryResultCount, static_cast<size_t>(2));
+        EXPECT_EQ(snap2.visibleCards, static_cast<size_t>(2));
+
+        // 3. Ajouter une troisième note -> Compteur 3 et trois cartes visibles
+        simulateVoiceCommand(engine, ctrl, "Note, troisième mesure ventilateur OK", 3000);
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(3));
+        auto snap3 = ui.buildJournalSnapshot();
+        EXPECT_EQ(snap3.queryResultCount, static_cast<size_t>(3));
+        EXPECT_EQ(snap3.visibleCards, static_cast<size_t>(3));
+        EXPECT_EQ(snap3.cards[0].entryId, static_cast<uint32_t>(3));
+        EXPECT_EQ(snap3.cards[1].entryId, static_cast<uint32_t>(2));
+        EXPECT_EQ(snap3.cards[2].entryId, static_cast<uint32_t>(1));
+
+        // 4. Lire la dernière note -> Texte exact de la dernière entrée
+        simulateVoiceCommand(engine, ctrl, "Lis la dernière note", 4000);
+        EXPECT_FALSE(engine.spokenTexts.empty());
+        EXPECT_TRUE(std::string(engine.spokenTexts.back().c_str()).find("troisième mesure ventilateur OK") != std::string::npos);
+
+        // 5. Changer d'état vocal (READY -> LISTENING -> READY) -> Compteur inchangé
+        EXPECT_TRUE(ctrl.onTalkButtonPressed(5000));
+        EXPECT_EQ(ctrl.getState(), JournalState::LISTENING);
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(3));
+        ctrl.onStopButtonPressed(5100);
+        EXPECT_EQ(ctrl.getState(), JournalState::READY);
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(3));
+
+        // 6. Naviguer puis revenir au Journal -> Notes toujours visibles
+        ui.setPage(UiPage::HOME);
+        ui.setPage(UiPage::PROJECTS);
+        ui.setPage(UiPage::JOURNAL);
+        auto snapNav = ui.buildJournalSnapshot();
+        EXPECT_EQ(snapNav.visibleCards, static_cast<size_t>(3));
+
+        // 8. LIST_ENTRIES (queryEntryIds + getEntry) identique au Journal
+        auto ids = repo.queryEntryIds(EntryFilter{}, 20, 0);
+        EXPECT_EQ(ids.size(), static_cast<size_t>(3));
+        EXPECT_EQ(ids[0], snapNav.cards[0].entryId);
+        EXPECT_EQ(ids[1], snapNav.cards[1].entryId);
+        EXPECT_EQ(ids[2], snapNav.cards[2].entryId);
+    }
+
+    // 7. Redémarrer -> Notes conservées
+    {
+        JournalRepository repoReboot(&baseFs);
+        EXPECT_TRUE(repoReboot.begin());
+        EXPECT_EQ(repoReboot.countEntries(), static_cast<size_t>(3));
+        JournalEntry last;
+        EXPECT_TRUE(repoReboot.getEntry(3, last));
+        EXPECT_EQ(last.text, "troisième mesure ventilateur OK");
+    }
+
+    cleanupTestDir(baseFs, true);
+}
+
+void test_recovery_more_than_five_notes_and_over_180_bytes() {
+    NativeFileSystem baseFs("tests_data_recovery_cap");
+    cleanupTestDir(baseFs);
+
+    MockKeyValueStore nvsStore;
+    JournalStorage legacyStorage(&nvsStore);
+    EXPECT_TRUE(legacyStorage.begin());
+
+    JournalRepository repo(&baseFs);
+    EXPECT_TRUE(repo.begin());
+    TimeService ts;
+    ProjectService ps(repo, ts);
+    TaskService taskSvc(repo, ts);
+    SearchService searchSvc(repo, ts);
+    AnalysisService analysisSvc(repo, ps, searchSvc, ts);
+    CommandRouter router(30000, ParserMode::INTELLIGENT);
+    router.setStructuredMemoryEnabled(true);
+    MockVoiceEngine engine;
+    JournalUI ui;
+    ui.attachServices(&repo, &ps, &taskSvc, &ts);
+    VoiceController ctrl(engine, legacyStorage, router);
+    ctrl.attachStructuredMemory(&repo, &ps, &taskSvc, &searchSvc, &analysisSvc, &ts, &ui);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // Ajouter 7 notes (> limite historique NVS de 5) dont une de 260 octets (> 180 octets NVS)
+    for (int i = 1; i <= 6; ++i) {
+        std::string cmd = "Note, observation numero " + std::to_string(i);
+        simulateVoiceCommand(engine, ctrl, cmd.c_str(), static_cast<uint32_t>(1000 * i));
+    }
+    std::string longBody(260, 'x');
+    std::string longCmd = "Note, " + longBody;
+    simulateVoiceCommand(engine, ctrl, longCmd.c_str(), 7000);
+
+    EXPECT_EQ(repo.countEntries(), static_cast<size_t>(7));
+    EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(7));
+    EXPECT_EQ(legacyStorage.count(), static_cast<size_t>(0)); // Aucune dépendance NVS
+
+    JournalEntry e7;
+    EXPECT_TRUE(repo.getEntry(7, e7));
+    EXPECT_EQ(e7.text, longBody);
+
+    // Le Journal affiche les 3 dernières entrées (7, 6, 5)
+    auto snap = ui.buildJournalSnapshot();
+    EXPECT_EQ(snap.totalEntries, static_cast<size_t>(7));
+    EXPECT_EQ(snap.visibleCards, static_cast<size_t>(3));
+    EXPECT_EQ(snap.cards[0].entryId, static_cast<uint32_t>(7));
+    EXPECT_EQ(snap.cards[1].entryId, static_cast<uint32_t>(6));
+    EXPECT_EQ(snap.cards[2].entryId, static_cast<uint32_t>(5));
+
+    cleanupTestDir(baseFs, true);
+}
+
+void test_recovery_simulated_write_and_mount_failures() {
+    NativeFileSystem baseFs("tests_data_recovery_faults");
+    cleanupTestDir(baseFs);
+    FaultInjectingFileSystem faultFs(&baseFs);
+
+    MockKeyValueStore nvsStore;
+    JournalStorage legacyStorage(&nvsStore);
+    EXPECT_TRUE(legacyStorage.begin());
+
+    // 1. Échec de montage LittleFS -> erreur explicite, aucune bascule sur NVS
+    {
+        faultFs.mounted = false;
+        JournalRepository repo(&faultFs);
+        EXPECT_FALSE(repo.begin());
+        EXPECT_FALSE(repo.isInitialized());
+        EXPECT_EQ(repo.getLastError(), "FS_NOT_MOUNTED");
+
+        CommandRouter router(30000, ParserMode::INTELLIGENT);
+        MockVoiceEngine engine;
+        JournalUI ui;
+        ui.attachServices(&repo, nullptr, nullptr, nullptr);
+        VoiceController ctrl(engine, legacyStorage, router);
+        ctrl.attachStructuredMemory(&repo, nullptr, nullptr, nullptr, nullptr, nullptr, &ui);
+        ctrl.attachCallbacks();
+        engine.simulateReady();
+
+        simulateVoiceCommand(engine, ctrl, "Note, ne doit pas basculer en NVS", 1000);
+        EXPECT_EQ(legacyStorage.count(), static_cast<size_t>(0));
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(0));
+        EXPECT_TRUE(engine.spokenTexts.empty() ||
+                    std::string(engine.spokenTexts.back().c_str()).find("Note enregistree") == std::string::npos);
+
+        auto snap = ui.buildJournalSnapshot();
+        EXPECT_FALSE(snap.littleFsMounted);
+        EXPECT_TRUE(snap.statusIsError);
+        EXPECT_TRUE(snap.statusBanner.find("LittleFS") != std::string::npos);
+    }
+
+    // 2. Échec d'écriture simulé -> aucune confirmation de réussite, compteur inchangé
+    {
+        faultFs.mounted = true;
+        JournalRepository repo(&faultFs);
+        EXPECT_TRUE(repo.begin());
+
+        CommandRouter router(30000, ParserMode::INTELLIGENT);
+        MockVoiceEngine engine;
+        JournalUI ui;
+        ui.attachServices(&repo, nullptr, nullptr, nullptr);
+        VoiceController ctrl(engine, legacyStorage, router);
+        ctrl.attachStructuredMemory(&repo, nullptr, nullptr, nullptr, nullptr, nullptr, &ui);
+        ctrl.attachCallbacks();
+        engine.simulateReady();
+
+        faultFs.failAllWrites = true;
+        simulateVoiceCommand(engine, ctrl, "Note, ecriture en echec", 2000);
+        faultFs.failAllWrites = false;
+
+        EXPECT_EQ(repo.countEntries(), static_cast<size_t>(0));
+        EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(0));
+        EXPECT_EQ(legacyStorage.count(), static_cast<size_t>(0));
+        EXPECT_TRUE(engine.spokenTexts.empty() ||
+                    std::string(engine.spokenTexts.back().c_str()).find("Note enregistree") == std::string::npos);
+        EXPECT_TRUE(repo.getWriteErrorCount() > 0);
+    }
+
+    // 3. Échec getEntry() simulé dans JournalUI -> erreur explicite, jamais carte vide/ancienne
+    {
+        faultFs.mounted = true;
+        faultFs.failAllWrites = false;
+        faultFs.failReads = false;
+        JournalRepository repo(&faultFs);
+        EXPECT_TRUE(repo.begin());
+        JournalEntry e;
+        e.text = "Observation valide";
+        EXPECT_TRUE(repo.addEntry(e));
+
+        JournalUI ui;
+        ui.attachServices(&repo, nullptr, nullptr, nullptr);
+
+        faultFs.failReads = true;
+        auto snapErr = ui.buildJournalSnapshot();
+        faultFs.failReads = false;
+
+        EXPECT_EQ(snapErr.readErrors, static_cast<size_t>(1));
+        EXPECT_TRUE(snapErr.cards[0].visible);
+        EXPECT_TRUE(snapErr.cards[0].readError);
+        EXPECT_TRUE(snapErr.cards[0].text.find("Erreur lecture") != std::string::npos);
+        EXPECT_EQ(snapErr.cards[0].errorReason, "GET_ENTRY_SHORT_READ");
+    }
+
+    cleanupTestDir(baseFs, true);
+}
+
+void test_recovery_clear_preserves_tasks_and_projects_and_filter_reset() {
+    NativeFileSystem baseFs("tests_data_recovery_clear");
+    cleanupTestDir(baseFs);
+
+    MockKeyValueStore nvsStore;
+    JournalStorage legacyStorage(&nvsStore);
+    EXPECT_TRUE(legacyStorage.begin());
+
+    JournalRepository repo(&baseFs);
+    EXPECT_TRUE(repo.begin());
+    TimeService ts;
+    ProjectService ps(repo, ts);
+    TaskService taskSvc(repo, ts);
+    SearchService searchSvc(repo, ts);
+    AnalysisService analysisSvc(repo, ps, searchSvc, ts);
+    CommandRouter router(30000, ParserMode::INTELLIGENT);
+    router.setStructuredMemoryEnabled(true);
+    MockVoiceEngine engine;
+    JournalUI ui;
+    ui.attachServices(&repo, &ps, &taskSvc, &ts);
+    VoiceController ctrl(engine, legacyStorage, router);
+    ctrl.attachStructuredMemory(&repo, &ps, &taskSvc, &searchSvc, &analysisSvc, &ts, &ui);
+    ctrl.attachCallbacks();
+    engine.simulateReady();
+
+    // Créer 1 projet, 1 tâche et 2 observations
+    uint32_t pid = 0;
+    EXPECT_TRUE(ps.createProject("Labo", {}, pid));
+    uint32_t tid = 0;
+    EXPECT_TRUE(taskSvc.addTask("Verifier alimentation", pid, 0, tid));
+    simulateVoiceCommand(engine, ctrl, "Note, observation alpha", 1000);
+    simulateVoiceCommand(engine, ctrl, "Note, observation beta", 2000);
+    EXPECT_EQ(repo.countEntries(), static_cast<size_t>(3)); // 1 tâche + 2 observations
+
+    // Tester filtre vide vs journal vide + reset filtre (COR-ST06)
+    ui.setJournalFilter(999, -1, "ProjetVide");
+    auto snapFilteredEmpty = ui.buildJournalSnapshot();
+    EXPECT_TRUE(snapFilteredEmpty.filterActive);
+    EXPECT_EQ(snapFilteredEmpty.totalEntries, static_cast<size_t>(3));
+    EXPECT_EQ(snapFilteredEmpty.queryResultCount, static_cast<size_t>(0));
+    EXPECT_EQ(snapFilteredEmpty.statusBanner, "Aucun résultat pour ce filtre");
+
+    ui.clearJournalFilter();
+    auto snapReset = ui.buildJournalSnapshot();
+    EXPECT_FALSE(snapReset.filterActive);
+    EXPECT_EQ(snapReset.visibleCards, static_cast<size_t>(3));
+
+    // Suppression confirmée des observations : ne doit supprimer NI le projet NI la tâche
+    simulateVoiceCommand(engine, ctrl, "Efface toutes les notes", 3000);
+    EXPECT_TRUE(ctrl.getViewModel().clearConfirmPending);
+    simulateVoiceCommand(engine, ctrl, "Confirmer la suppression", 4000);
+
+    EXPECT_EQ(ps.listProjects().size(), static_cast<size_t>(1));
+    EXPECT_EQ(taskSvc.countOpenTasks(), static_cast<size_t>(1));
+    EXPECT_EQ(repo.countEntries(), static_cast<size_t>(1)); // Seule la tâche subsiste
+    EXPECT_EQ(ctrl.getViewModel().noteCount, static_cast<size_t>(1));
+
+    cleanupTestDir(baseFs, true);
+}
+
+void test_recovery_truncate_and_compact_failure_preserves_original() {
+    NativeFileSystem baseFs("tests_data_recovery_integrity");
+    cleanupTestDir(baseFs);
+    FaultInjectingFileSystem faultFs(&baseFs);
+
+    // 1. Préparer un journal valide avec 2 notes
+    {
+        JournalRepository repo(&faultFs);
+        EXPECT_TRUE(repo.begin());
+        JournalEntry e1; e1.text = "Note intacte 1"; EXPECT_TRUE(repo.addEntry(e1));
+        JournalEntry e2; e2.text = "Note intacte 2"; EXPECT_TRUE(repo.addEntry(e2));
+    }
+
+    // 2. Échec d'écriture pendant compact() -> retourne false et préserve l'original intact
+    {
+        JournalRepository repo(&faultFs);
+        EXPECT_TRUE(repo.begin());
+        faultFs.failTmpWrites = true;
+        EXPECT_FALSE(repo.compact());
+        faultFs.failTmpWrites = false;
+        EXPECT_EQ(repo.countEntries(), static_cast<size_t>(2));
+        JournalEntry check;
+        EXPECT_TRUE(repo.getEntry(2, check));
+        EXPECT_EQ(check.text, "Note intacte 2");
+    }
+
+    // 3. Injecter des octets corrompus en fin de fichier et simuler un échec truncate() -> begin() échoue proprement
+    {
+        IFileHandle* f = baseFs.open(JournalRepository::LOG_PATH, "a");
+        EXPECT_TRUE(f != nullptr);
+        uint8_t garbage[7] = {0xAA, 0x55, 1, 99, 0, 0, 0};
+        f->write(garbage, sizeof(garbage));
+        f->flush();
+        f->close();
+        delete f;
+
+        faultFs.failTruncate = true;
+        JournalRepository repoFail(&faultFs);
+        EXPECT_FALSE(repoFail.begin());
+        EXPECT_FALSE(repoFail.isInitialized());
+        EXPECT_EQ(repoFail.getLastError(), "TRUNCATE_REPAIR_FAILED");
+        faultFs.failTruncate = false;
+
+        // Ensuite, avec truncate fonctionnel, les 2 notes originales sont toujours intactes et réparables !
+        JournalRepository repoOk(&faultFs);
+        EXPECT_TRUE(repoOk.begin());
+        EXPECT_EQ(repoOk.countEntries(), static_cast<size_t>(2));
+        JournalEntry check;
+        EXPECT_TRUE(repoOk.getEntry(2, check));
+        EXPECT_EQ(check.text, "Note intacte 2");
+    }
+
+    cleanupTestDir(baseFs, true);
+}
+
 } // namespace
 
 V030Report runV030StructuredMemorySuite() {
@@ -429,6 +883,11 @@ V030Report runV030StructuredMemorySuite() {
     runSubTest("TimeService: fuseau Zurich, RTC et dates relatives", test_time_service_relative_dates);
     runSubTest("AnalysisService: generation de prompt IA cible et borne", test_analysis_service_bounded_context);
     runSubTest("CommandRouter: intentions structurees v0.3.0 actives", test_command_router_v030);
+    runSubTest("Recovery: ajout 1-2-3, lecture, etats, navigation, reboot, LIST_ENTRIES", test_recovery_add_1_2_3_read_state_nav_reboot_and_list);
+    runSubTest("Recovery: >5 observations et >180 octets independants de NVS", test_recovery_more_than_five_notes_and_over_180_bytes);
+    runSubTest("Recovery: echec montage LittleFS, echec ecriture et echec getEntry", test_recovery_simulated_write_and_mount_failures);
+    runSubTest("Recovery: suppression confirmee preserve taches/projets et reset filtre", test_recovery_clear_preserves_tasks_and_projects_and_filter_reset);
+    runSubTest("Recovery: echec truncate et compactage preserve le journal original", test_recovery_truncate_and_compact_failure_preserves_original);
 
     std::printf("\nTotal v0.3.0 Tests : %d PASS, %d FAIL\n", s_v030Passed, s_v030Failed);
 

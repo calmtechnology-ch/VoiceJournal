@@ -218,8 +218,15 @@ JournalRepository::JournalRepository(IFileSystem* fs)
 JournalRepository::~JournalRepository() = default;
 
 bool JournalRepository::begin() {
+    initialized_ = false;
+    lastError_.clear();
+
     if (!fs_) {
         lastError_ = "FS_NULL";
+        return false;
+    }
+    if (!fs_->isMounted()) {
+        lastError_ = "FS_NOT_MOUNTED";
         return false;
     }
 
@@ -230,17 +237,32 @@ bool JournalRepository::begin() {
     nextEntryId_ = 1;
     nextProjectId_ = 1;
 
+    // Reprise automatique si un compactage a été interrompu entre LOG->BAK et TMP->LOG
+    if (!fs_->exists(LOG_PATH) && fs_->exists(BAK_PATH)) {
+        if (!fs_->rename(BAK_PATH, LOG_PATH)) {
+            lastError_ = "RECOVER_BAK_FAILED";
+            return false;
+        }
+    }
+
     // Si le fichier journal n'existe pas, le créer avec l'en-tête
     if (!fs_->exists(LOG_PATH)) {
         IFileHandle* file = fs_->open(LOG_PATH, "w");
         if (!file) {
             lastError_ = "CREATE_LOG_FAILED";
+            ++writeErrorCount_;
             return false;
         }
-        file->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER));
+        const size_t written = file->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER));
         file->flush();
         file->close();
         delete file;
+        if (written != sizeof(FILE_HEADER)) {
+            lastError_ = "CREATE_LOG_WRITE_FAILED";
+            ++writeErrorCount_;
+            fs_->remove(LOG_PATH);
+            return false;
+        }
         initialized_ = true;
         return true;
     }
@@ -252,28 +274,42 @@ bool JournalRepository::begin() {
     }
     if (!file) {
         lastError_ = "OPEN_LOG_FAILED";
+        ++readErrorCount_;
         return false;
     }
 
     size_t fileSize = file->size();
-    if (fileSize < sizeof(FILE_HEADER)) {
-        // Fichier trop court ou vide : réinitialiser l'en-tête
+    if (fileSize == 0) {
+        // Fichier vierge (0 octet) : écrire l'en-tête
         file->seek(0);
-        file->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER));
+        const size_t written = file->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER));
         file->flush();
         file->close();
         delete file;
+        if (written != sizeof(FILE_HEADER)) {
+            lastError_ = "INIT_HDR_WRITE_FAILED";
+            ++writeErrorCount_;
+            return false;
+        }
         initialized_ = true;
         return true;
+    }
+    if (fileSize < sizeof(FILE_HEADER)) {
+        file->close();
+        delete file;
+        lastError_ = "CORRUPTED_HEADER";
+        ++readErrorCount_;
+        return false;
     }
 
     // Vérifier l'en-tête
     char hdr[8];
-    file->read(reinterpret_cast<uint8_t*>(hdr), sizeof(hdr));
-    if (std::memcmp(hdr, FILE_HEADER, sizeof(FILE_HEADER)) != 0) {
+    if (file->read(reinterpret_cast<uint8_t*>(hdr), sizeof(hdr)) != sizeof(hdr) ||
+        std::memcmp(hdr, FILE_HEADER, sizeof(FILE_HEADER)) != 0) {
         file->close();
         delete file;
         lastError_ = "INVALID_HEADER";
+        ++readErrorCount_;
         return false;
     }
 
@@ -390,7 +426,14 @@ bool JournalRepository::begin() {
 
     // Si le fichier contenait des octets incomplets en fin de fichier, le tronquer au dernier enregistrement valide
     if (lastValidPos < fileSize) {
-        file->truncate(lastValidPos);
+        if (!file->truncate(lastValidPos)) {
+            file->close();
+            delete file;
+            lastError_ = "TRUNCATE_REPAIR_FAILED";
+            ++writeErrorCount_;
+            initialized_ = false;
+            return false;
+        }
     }
 
     file->close();
@@ -401,15 +444,31 @@ bool JournalRepository::begin() {
 }
 
 bool JournalRepository::appendRecord(uint8_t recordType, const std::string& payload, uint32_t& outOffset, uint32_t& outLen) {
-    if (!fs_) return false;
+    if (!fs_) {
+        lastError_ = "FS_NULL";
+        ++writeErrorCount_;
+        return false;
+    }
+    if (!fs_->isMounted()) {
+        lastError_ = "FS_NOT_MOUNTED";
+        ++writeErrorCount_;
+        return false;
+    }
     IFileHandle* file = fs_->open(LOG_PATH, "a");
     if (!file) {
         lastError_ = "APPEND_OPEN_FAILED";
+        ++writeErrorCount_;
         return false;
     }
 
     size_t curPos = file->size();
-    file->seek(curPos);
+    if (!file->seek(curPos)) {
+        file->close();
+        delete file;
+        lastError_ = "APPEND_SEEK_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
 
     uint8_t header[7];
     header[0] = RECORD_MAGIC0;
@@ -422,6 +481,7 @@ bool JournalRepository::appendRecord(uint8_t recordType, const std::string& payl
         file->close();
         delete file;
         lastError_ = "WRITE_HDR_FAILED";
+        ++writeErrorCount_;
         return false;
     }
 
@@ -433,6 +493,7 @@ bool JournalRepository::appendRecord(uint8_t recordType, const std::string& payl
             file->close();
             delete file;
             lastError_ = "WRITE_PAYLOAD_FAILED";
+            ++writeErrorCount_;
             return false;
         }
     }
@@ -442,11 +503,18 @@ bool JournalRepository::appendRecord(uint8_t recordType, const std::string& payl
         file->close();
         delete file;
         lastError_ = "WRITE_CRC_FAILED";
+        ++writeErrorCount_;
         return false;
     }
 
     uint8_t nl = '\n';
-    file->write(&nl, 1);
+    if (file->write(&nl, 1) != 1) {
+        file->close();
+        delete file;
+        lastError_ = "WRITE_NL_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
     file->flush();
     file->close();
     delete file;
@@ -454,24 +522,30 @@ bool JournalRepository::appendRecord(uint8_t recordType, const std::string& payl
 }
 
 bool JournalRepository::addEntry(JournalEntry& entry) {
-    if (!initialized_) return false;
+    if (!initialized_) {
+        lastError_ = "REPO_NOT_INITIALIZED";
+        ++writeErrorCount_;
+        return false;
+    }
     if (countEntries() >= MAX_CAPACITY) {
         lastError_ = "STORAGE_FULL";
+        ++writeErrorCount_;
         return false;
     }
 
     if (entry.status == EntryStatus::NONE) {
         entry.status = defaultStatusForType(entry.type);
     }
-    entry.id = nextEntryId_++;
-    if (entry.status == EntryStatus::NONE) {
-        entry.status = defaultStatusForType(entry.type);
-    }
+    const uint32_t candidateId = nextEntryId_;
+    entry.id = candidateId;
+
     std::string payload = serializeEntry(entry);
     uint32_t offset = 0, len = 0;
     if (!appendRecord(TYPE_ENTRY_DATA, payload, offset, len)) {
+        entry.id = 0;
         return false;
     }
+    nextEntryId_ = candidateId + 1;
 
     IndexEntry ie;
     ie.id = entry.id;
@@ -490,7 +564,11 @@ bool JournalRepository::addEntry(JournalEntry& entry) {
 }
 
 bool JournalRepository::updateEntry(const JournalEntry& entry) {
-    if (!initialized_) return false;
+    if (!initialized_) {
+        lastError_ = "REPO_NOT_INITIALIZED";
+        ++writeErrorCount_;
+        return false;
+    }
     auto it = entryIdToIdx_.find(entry.id);
     if (it == entryIdToIdx_.end() || entriesIndex_[it->second].isDeleted) {
         lastError_ = "ENTRY_NOT_FOUND";
@@ -515,7 +593,11 @@ bool JournalRepository::updateEntry(const JournalEntry& entry) {
 }
 
 bool JournalRepository::deleteEntry(uint32_t id) {
-    if (!initialized_) return false;
+    if (!initialized_) {
+        lastError_ = "REPO_NOT_INITIALIZED";
+        ++writeErrorCount_;
+        return false;
+    }
     auto it = entryIdToIdx_.find(id);
     if (it == entryIdToIdx_.end() || entriesIndex_[it->second].isDeleted) {
         lastError_ = "ENTRY_NOT_FOUND";
@@ -533,19 +615,44 @@ bool JournalRepository::deleteEntry(uint32_t id) {
 }
 
 bool JournalRepository::getEntry(uint32_t id, JournalEntry& outEntry) const {
-    if (!initialized_ || !fs_) return false;
+    if (!initialized_) {
+        lastError_ = "REPO_NOT_INITIALIZED";
+        ++readErrorCount_;
+        return false;
+    }
+    if (!fs_) {
+        lastError_ = "FS_NULL";
+        ++readErrorCount_;
+        return false;
+    }
+    if (!fs_->isMounted()) {
+        lastError_ = "FS_NOT_MOUNTED";
+        ++readErrorCount_;
+        return false;
+    }
     auto it = entryIdToIdx_.find(id);
-    if (it == entryIdToIdx_.end() || entriesIndex_[it->second].isDeleted) {
+    if (it == entryIdToIdx_.end()) {
+        lastError_ = "ENTRY_NOT_FOUND";
+        return false;
+    }
+    if (entriesIndex_[it->second].isDeleted) {
+        lastError_ = "ENTRY_DELETED";
         return false;
     }
 
     const IndexEntry& ie = entriesIndex_[it->second];
     IFileHandle* file = fs_->open(LOG_PATH, "r");
-    if (!file) return false;
+    if (!file) {
+        lastError_ = "GET_ENTRY_OPEN_FAILED";
+        ++readErrorCount_;
+        return false;
+    }
 
     if (!file->seek(ie.fileOffset)) {
         file->close();
         delete file;
+        lastError_ = "GET_ENTRY_SEEK_FAILED";
+        ++readErrorCount_;
         return false;
     }
 
@@ -555,8 +662,17 @@ bool JournalRepository::getEntry(uint32_t id, JournalEntry& outEntry) const {
     file->close();
     delete file;
 
-    if (rd != ie.payloadLength) return false;
-    return deserializeEntry(payload, outEntry);
+    if (rd != ie.payloadLength) {
+        lastError_ = "GET_ENTRY_SHORT_READ";
+        ++readErrorCount_;
+        return false;
+    }
+    if (!deserializeEntry(payload, outEntry)) {
+        lastError_ = "GET_ENTRY_DESERIALIZE_FAILED";
+        ++readErrorCount_;
+        return false;
+    }
+    return true;
 }
 
 size_t JournalRepository::countEntries() const {
@@ -597,13 +713,20 @@ std::vector<uint32_t> JournalRepository::queryEntryIds(const EntryFilter& filter
 }
 
 bool JournalRepository::addProject(Project& project) {
-    if (!initialized_) return false;
-    project.id = nextProjectId_++;
+    if (!initialized_) {
+        lastError_ = "REPO_NOT_INITIALIZED";
+        ++writeErrorCount_;
+        return false;
+    }
+    const uint32_t candidateId = nextProjectId_;
+    project.id = candidateId;
     std::string payload = serializeProject(project);
     uint32_t offset = 0, len = 0;
     if (!appendRecord(TYPE_PROJECT_DATA, payload, offset, len)) {
+        project.id = 0;
         return false;
     }
+    nextProjectId_ = candidateId + 1;
 
     IndexProject ip;
     ip.id = project.id;
@@ -680,71 +803,223 @@ uint32_t JournalRepository::findProjectIdByName(const std::string& name) const {
     return 0;
 }
 
-bool JournalRepository::compact() {
-    if (!initialized_ || !fs_) return false;
+bool JournalRepository::validateJournalFile(const char* path, size_t expectedProjects, size_t expectedEntries) const {
+    if (!fs_ || !path) return false;
+    IFileHandle* file = fs_->open(path, "r");
+    if (!file) return false;
 
-    // 1. Ouvrir le fichier temporaire
-    IFileHandle* tmpFile = fs_->open(TMP_PATH, "w");
-    if (!tmpFile) {
-        lastError_ = "COMPACT_CREATE_TMP_FAILED";
+    const size_t fileSize = file->size();
+    if (fileSize < sizeof(FILE_HEADER)) {
+        file->close();
+        delete file;
         return false;
     }
 
-    tmpFile->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER));
-
-    // 2. Écrire tous les projets
-    for (const auto& ip : projectsIndex_) {
-        Project proj;
-        if (getProject(ip.id, proj)) {
-            std::string payload = serializeProject(proj);
-            uint8_t hdr[7];
-            hdr[0] = RECORD_MAGIC0;
-            hdr[1] = RECORD_MAGIC1;
-            hdr[2] = TYPE_PROJECT_DATA;
-            uint32_t pLen = static_cast<uint32_t>(payload.size());
-            std::memcpy(&hdr[3], &pLen, 4);
-            tmpFile->write(hdr, sizeof(hdr));
-            tmpFile->write(reinterpret_cast<const uint8_t*>(payload.data()), pLen);
-            uint32_t crc = computeCrc32(reinterpret_cast<const uint8_t*>(payload.data()), pLen);
-            tmpFile->write(reinterpret_cast<const uint8_t*>(&crc), 4);
-            uint8_t nl = '\n';
-            tmpFile->write(&nl, 1);
-        }
+    char hdr[8];
+    if (file->read(reinterpret_cast<uint8_t*>(hdr), sizeof(hdr)) != sizeof(hdr) ||
+        std::memcmp(hdr, FILE_HEADER, sizeof(FILE_HEADER)) != 0) {
+        file->close();
+        delete file;
+        return false;
     }
 
-    // 3. Écrire toutes les entrées actives (non supprimées)
+    size_t pos = sizeof(FILE_HEADER);
+    size_t validProjects = 0;
+    size_t validEntries = 0;
+
+    while (pos < fileSize) {
+        if (pos + 12 > fileSize || !file->seek(pos)) {
+            file->close();
+            delete file;
+            return false;
+        }
+        uint8_t m0 = 0, m1 = 0, recType = 0;
+        if (file->read(&m0, 1) != 1 || file->read(&m1, 1) != 1 || file->read(&recType, 1) != 1) {
+            file->close();
+            delete file;
+            return false;
+        }
+        if (m0 != RECORD_MAGIC0 || m1 != RECORD_MAGIC1) {
+            file->close();
+            delete file;
+            return false;
+        }
+        uint32_t payloadLen = 0;
+        if (file->read(reinterpret_cast<uint8_t*>(&payloadLen), 4) != 4 ||
+            payloadLen > 4096 || pos + 7 + payloadLen + 5 > fileSize) {
+            file->close();
+            delete file;
+            return false;
+        }
+        std::string payload(payloadLen, '\0');
+        if (payloadLen > 0 && file->read(reinterpret_cast<uint8_t*>(&payload[0]), payloadLen) != payloadLen) {
+            file->close();
+            delete file;
+            return false;
+        }
+        uint32_t expectedCrc = 0;
+        uint8_t nl = 0;
+        if (file->read(reinterpret_cast<uint8_t*>(&expectedCrc), 4) != 4 ||
+            file->read(&nl, 1) != 1 || nl != '\n') {
+            file->close();
+            delete file;
+            return false;
+        }
+        if (computeCrc32(reinterpret_cast<const uint8_t*>(payload.data()), payloadLen) != expectedCrc) {
+            file->close();
+            delete file;
+            return false;
+        }
+
+        if (recType == TYPE_PROJECT_DATA) {
+            Project p;
+            if (!deserializeProject(payload, p)) {
+                file->close();
+                delete file;
+                return false;
+            }
+            ++validProjects;
+        } else if (recType == TYPE_ENTRY_DATA) {
+            JournalEntry e;
+            if (!deserializeEntry(payload, e)) {
+                file->close();
+                delete file;
+                return false;
+            }
+            ++validEntries;
+        }
+        pos += (7 + payloadLen + 5);
+    }
+
+    file->close();
+    delete file;
+    return (pos == fileSize && validProjects == expectedProjects && validEntries == expectedEntries);
+}
+
+bool JournalRepository::compact() {
+    if (!initialized_ || !fs_ || !fs_->isMounted()) {
+        lastError_ = "COMPACT_NOT_READY";
+        return false;
+    }
+
+    auto writeTmpRecord = [](IFileHandle* f, uint8_t recType, const std::string& payload) -> bool {
+        uint8_t hdr[7];
+        hdr[0] = RECORD_MAGIC0;
+        hdr[1] = RECORD_MAGIC1;
+        hdr[2] = recType;
+        uint32_t pLen = static_cast<uint32_t>(payload.size());
+        std::memcpy(&hdr[3], &pLen, 4);
+        if (f->write(hdr, sizeof(hdr)) != sizeof(hdr)) return false;
+        if (pLen > 0 && f->write(reinterpret_cast<const uint8_t*>(payload.data()), pLen) != pLen) return false;
+        uint32_t crc = computeCrc32(reinterpret_cast<const uint8_t*>(payload.data()), pLen);
+        if (f->write(reinterpret_cast<const uint8_t*>(&crc), 4) != 4) return false;
+        uint8_t nl = '\n';
+        if (f->write(&nl, 1) != 1) return false;
+        return true;
+    };
+
+    // 1. Ouvrir le fichier temporaire
+    if (fs_->exists(TMP_PATH)) {
+        fs_->remove(TMP_PATH);
+    }
+    IFileHandle* tmpFile = fs_->open(TMP_PATH, "w");
+    if (!tmpFile) {
+        lastError_ = "COMPACT_CREATE_TMP_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
+
+    if (tmpFile->write(reinterpret_cast<const uint8_t*>(FILE_HEADER), sizeof(FILE_HEADER)) != sizeof(FILE_HEADER)) {
+        tmpFile->close();
+        delete tmpFile;
+        fs_->remove(TMP_PATH);
+        lastError_ = "COMPACT_WRITE_HDR_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
+
+    // 2. Écrire tous les projets en contrôlant chaque lecture et écriture
+    size_t expectedProjects = 0;
+    for (const auto& ip : projectsIndex_) {
+        Project proj;
+        if (!getProject(ip.id, proj)) {
+            tmpFile->close();
+            delete tmpFile;
+            fs_->remove(TMP_PATH);
+            lastError_ = "COMPACT_READ_PROJECT_FAILED";
+            return false;
+        }
+        if (!writeTmpRecord(tmpFile, TYPE_PROJECT_DATA, serializeProject(proj))) {
+            tmpFile->close();
+            delete tmpFile;
+            fs_->remove(TMP_PATH);
+            lastError_ = "COMPACT_WRITE_PROJECT_FAILED";
+            ++writeErrorCount_;
+            return false;
+        }
+        ++expectedProjects;
+    }
+
+    // 3. Écrire toutes les entrées actives (non supprimées) en contrôlant chaque lecture et écriture
+    size_t expectedEntries = 0;
     for (const auto& ie : entriesIndex_) {
         if (ie.isDeleted) continue;
         JournalEntry entry;
-        if (getEntry(ie.id, entry)) {
-            std::string payload = serializeEntry(entry);
-            uint8_t hdr[7];
-            hdr[0] = RECORD_MAGIC0;
-            hdr[1] = RECORD_MAGIC1;
-            hdr[2] = TYPE_ENTRY_DATA;
-            uint32_t pLen = static_cast<uint32_t>(payload.size());
-            std::memcpy(&hdr[3], &pLen, 4);
-            tmpFile->write(hdr, sizeof(hdr));
-            tmpFile->write(reinterpret_cast<const uint8_t*>(payload.data()), pLen);
-            uint32_t crc = computeCrc32(reinterpret_cast<const uint8_t*>(payload.data()), pLen);
-            tmpFile->write(reinterpret_cast<const uint8_t*>(&crc), 4);
-            uint8_t nl = '\n';
-            tmpFile->write(&nl, 1);
+        if (!getEntry(ie.id, entry)) {
+            tmpFile->close();
+            delete tmpFile;
+            fs_->remove(TMP_PATH);
+            lastError_ = "COMPACT_READ_ENTRY_FAILED";
+            return false;
         }
+        if (!writeTmpRecord(tmpFile, TYPE_ENTRY_DATA, serializeEntry(entry))) {
+            tmpFile->close();
+            delete tmpFile;
+            fs_->remove(TMP_PATH);
+            lastError_ = "COMPACT_WRITE_ENTRY_FAILED";
+            ++writeErrorCount_;
+            return false;
+        }
+        ++expectedEntries;
     }
 
     tmpFile->flush();
     tmpFile->close();
     delete tmpFile;
 
-    // 4. Remplacer atomiquement l'ancien fichier par le nouveau
-    fs_->remove(LOG_PATH);
-    if (!fs_->rename(TMP_PATH, LOG_PATH)) {
-        lastError_ = "COMPACT_RENAME_FAILED";
+    // 4. Valider intégralement le fichier de remplacement AVANT de toucher au journal original
+    if (!validateJournalFile(TMP_PATH, expectedProjects, expectedEntries)) {
+        fs_->remove(TMP_PATH);
+        lastError_ = "COMPACT_VERIFY_FAILED";
+        ++writeErrorCount_;
         return false;
     }
 
-    // 5. Reconstruire l'index
+    // 5. Remplacement sécurisé avec sauvegarde temporaire du journal original
+    if (fs_->exists(BAK_PATH)) {
+        fs_->remove(BAK_PATH);
+    }
+    if (fs_->exists(LOG_PATH) && !fs_->rename(LOG_PATH, BAK_PATH)) {
+        fs_->remove(TMP_PATH);
+        lastError_ = "COMPACT_BACKUP_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
+    if (!fs_->rename(TMP_PATH, LOG_PATH)) {
+        // Restaurer le journal original
+        if (fs_->exists(BAK_PATH)) {
+            fs_->rename(BAK_PATH, LOG_PATH);
+        }
+        fs_->remove(TMP_PATH);
+        lastError_ = "COMPACT_RENAME_FAILED";
+        ++writeErrorCount_;
+        return false;
+    }
+    if (fs_->exists(BAK_PATH)) {
+        fs_->remove(BAK_PATH);
+    }
+
+    // 6. Reconstruire l'index
     return begin();
 }
 

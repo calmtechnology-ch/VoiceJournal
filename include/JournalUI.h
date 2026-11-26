@@ -70,6 +70,38 @@ struct TouchSample {
 };
 
 /**
+ * @struct JournalCardSnapshot
+ * @brief État normalisé d'une carte du Journal (utilisé par LVGL et les tests natifs).
+ */
+struct JournalCardSnapshot {
+    uint32_t entryId = 0;
+    bool visible = false;
+    bool readError = false;
+    std::string text;
+    std::string meta;
+    std::string errorReason;
+};
+
+/**
+ * @struct JournalDisplaySnapshot
+ * @brief Instantané logique de la page Journal (COR-ST06).
+ */
+struct JournalDisplaySnapshot {
+    bool littleFsMounted = false;
+    bool repositoryReady = false;
+    bool filterActive = false;
+    size_t totalEntries = 0;
+    size_t queryResultCount = 0;
+    size_t visibleCards = 0;
+    size_t readErrors = 0;
+    std::string headerTitle;
+    std::string subtitle;
+    std::string statusBanner;
+    bool statusIsError = false;
+    std::vector<JournalCardSnapshot> cards;
+};
+
+/**
  * @class JournalUI
  * @brief Interface graphique LVGL 9 pour M5Stack CoreS3 (320x240, rotation native 0).
  */
@@ -142,10 +174,24 @@ public:
      */
     void setJournalFilter(int32_t projectId, int16_t type = -1, const String& title = "");
     void clearJournalFilter();
+    bool hasActiveJournalFilter() const {
+        return filterProjectId_ != -1 || filterType_ != -1 || filterTitle_.length() > 0;
+    }
+
+    /**
+     * @brief Demande le rafraîchissement immédiat de la page Journal (après ajout ou suppression).
+     */
+    void refreshJournal();
+
+    /**
+     * @brief Construit l'instantané d'affichage du Journal (indépendant de LVGL pour audit & tests).
+     */
+    JournalDisplaySnapshot buildJournalSnapshot() const;
 
     uint32_t getSelectedDetailEntryId() const { return selectedDetailEntryId_; }
 
     static String toDisplayAscii(const String& utf8);
+    static std::string truncateUtf8Std(const std::string& utf8, size_t maxBytes);
 
 private:
     VoiceJournal::JournalRepository* repo_ = nullptr;
@@ -213,6 +259,7 @@ private:
     lv_obj_t* lblJournalTitle_ = nullptr;
     lv_obj_t* lblJournalSubtitle_ = nullptr;
     lv_obj_t* btnJournalClearFilter_ = nullptr;
+    lv_obj_t* lblJournalEmpty_ = nullptr;
     lv_obj_t* listJournalContainer_ = nullptr;
     std::vector<lv_obj_t*> journalCardObjs_;
     std::vector<uint32_t> journalCardIds_;

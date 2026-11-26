@@ -66,6 +66,7 @@ public:
     static constexpr size_t MAX_CAPACITY = 1000;
     static constexpr const char* LOG_PATH = "/journal.log";
     static constexpr const char* TMP_PATH = "/journal.tmp";
+    static constexpr const char* BAK_PATH = "/journal.bak";
 
     explicit JournalRepository(IFileSystem* fs);
     ~JournalRepository();
@@ -79,7 +80,10 @@ public:
     bool begin();
 
     bool isInitialized() const { return initialized_; }
+    bool isFileSystemMounted() const { return fs_ != nullptr && fs_->isMounted(); }
     const std::string& getLastError() const { return lastError_; }
+    uint32_t getReadErrorCount() const { return readErrorCount_; }
+    uint32_t getWriteErrorCount() const { return writeErrorCount_; }
 
     // --- Gestion des entrées ---
     bool addEntry(JournalEntry& entry);
@@ -113,7 +117,9 @@ public:
 private:
     IFileSystem* fs_ = nullptr;
     bool initialized_ = false;
-    std::string lastError_;
+    mutable std::string lastError_;
+    mutable uint32_t readErrorCount_ = 0;
+    uint32_t writeErrorCount_ = 0;
 
     uint32_t nextEntryId_ = 1;
     uint32_t nextProjectId_ = 1;
@@ -131,6 +137,7 @@ private:
     static bool deserializeProject(const std::string& json, Project& project);
 
     bool appendRecord(uint8_t recordType, const std::string& payload, uint32_t& outOffset, uint32_t& outLen);
+    bool validateJournalFile(const char* path, size_t expectedProjects, size_t expectedEntries) const;
 };
 
 } // namespace VoiceJournal

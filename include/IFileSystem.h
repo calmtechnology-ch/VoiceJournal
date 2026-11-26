@@ -34,6 +34,7 @@ public:
     virtual IFileHandle* open(const char* path, const char* mode) = 0;
     virtual size_t totalBytes() = 0;
     virtual size_t usedBytes() = 0;
+    virtual bool isMounted() const { return true; }
 };
 
 } // namespace VoiceJournal

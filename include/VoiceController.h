@@ -252,6 +252,10 @@ struct JournalViewModel {
     String statusMessage;
     bool connected = false;
     bool clearConfirmPending = false;
+    bool structuredStorageMode = false;
+    bool littleFsMounted = false;
+    bool repositoryReady = false;
+    String storageError;
     bool labViewActive = false;
     uint8_t labViewSubPage = 0; // 0 = Résultat, 1 = Contexte sémantique, 2 = Comparaison
     ParsingLabData labData;
@@ -285,6 +289,18 @@ public:
         VoiceJournal::TimeService* timeService,
         JournalUI* ui
     );
+
+    /**
+     * @brief Active ou désactive explicitement le mode mémoire structurée v0.3.0 (source unique LittleFS).
+     */
+    void setStructuredMemoryMode(bool enabled);
+    bool isStructuredMemoryMode() const { return structuredModeRequested_; }
+    bool isStructuredStorageReady() const;
+
+    /**
+     * @brief Retourne de façon centralisée le nombre d'entrées du stockage actif (COR-ST03).
+     */
+    size_t getActiveNoteCount() const;
 
     /**
      * @brief Enregistre les callbacks aupres du moteur vocal et initialise la machine a etats.
@@ -385,6 +401,8 @@ private:
     void setStatusMessage(const String& msg);
     void setTranscriptDisplay(const String& text);
     void publishView();
+    void refreshStorageViewState();
+    size_t countClearableObservations() const;
 
     bool startListeningSession(uint32_t nowMs);
     bool finishListeningSession(uint32_t nowMs);
@@ -433,6 +451,7 @@ private:
     uint32_t captureStartedAtMs_ = 0;
 
     // Services structurés v0.3.0
+    bool structuredModeRequested_ = false;
     VoiceJournal::JournalRepository* repo_ = nullptr;
     VoiceJournal::ProjectService* projService_ = nullptr;
     VoiceJournal::TaskService* taskService_ = nullptr;

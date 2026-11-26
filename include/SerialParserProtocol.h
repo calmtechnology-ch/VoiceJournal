@@ -95,18 +95,34 @@ inline std::string formatJournalStatusJson(
     size_t usedBytes,
     size_t totalBytes,
     bool timeReliable,
-    const std::string& currentProject
+    const std::string& currentProject,
+    const char* backend = "LITTLEFS",
+    bool legacyNvsReady = false,
+    size_t legacyNvsCount = 0,
+    bool littleFsMounted = true,
+    bool repositoryReady = true,
+    uint32_t readErrors = 0,
+    uint32_t writeErrors = 0,
+    const std::string& lastStorageError = ""
 ) {
     std::ostringstream ss;
     ss << "{\n"
        << "  \"command\": \"JOURNAL_STATUS\",\n"
        << "  \"version\": \"" << version << "\",\n"
+       << "  \"backend\": \"" << (backend ? backend : "LITTLEFS") << "\",\n"
+       << "  \"legacyNvsReady\": " << (legacyNvsReady ? "true" : "false") << ",\n"
+       << "  \"legacyNvsCount\": " << legacyNvsCount << ",\n"
+       << "  \"littleFsMounted\": " << (littleFsMounted ? "true" : "false") << ",\n"
+       << "  \"repositoryReady\": " << (repositoryReady ? "true" : "false") << ",\n"
        << "  \"entryCount\": " << entryCount << ",\n"
        << "  \"capacity\": " << capacity << ",\n"
        << "  \"projectCount\": " << projectCount << ",\n"
        << "  \"openTasksCount\": " << openTasksCount << ",\n"
        << "  \"storageUsedBytes\": " << usedBytes << ",\n"
        << "  \"storageTotalBytes\": " << totalBytes << ",\n"
+       << "  \"readErrors\": " << readErrors << ",\n"
+       << "  \"writeErrors\": " << writeErrors << ",\n"
+       << "  \"lastStorageError\": \"" << escapeJson(lastStorageError) << "\",\n"
        << "  \"timeReliable\": " << (timeReliable ? "true" : "false") << ",\n"
        << "  \"currentProject\": \"" << escapeJson(currentProject) << "\"\n"
        << "}";

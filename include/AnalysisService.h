@@ -32,13 +32,16 @@ public:
      */
     std::string buildNotesAnalysisPrompt(const SearchCriteria& criteria, const std::string& userRequest = "") const;
 
+    /**
+     * @brief Formate le contexte borné des observations pour l'analyse IA.
+     */
+    std::string formatEntriesContext(const std::vector<uint32_t>& entryIds) const;
+
 private:
     JournalRepository& repo_;
     ProjectService& projectService_;
     SearchService& searchService_;
     TimeService& timeService_;
-
-    std::string formatEntriesContext(const std::vector<uint32_t>& entryIds) const;
 };
 
 } // namespace VoiceJournal

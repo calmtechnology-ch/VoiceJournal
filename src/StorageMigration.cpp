@@ -75,6 +75,13 @@ MigrationResult StorageMigration::migrate(IKeyValueStore* nvsStore, JournalRepos
         entry.text = std::string(noteText.c_str());
 
         if (repo.addEntry(entry)) {
+            JournalEntry verify;
+            if (!repo.getEntry(entry.id, verify) || verify.text != entry.text) {
+                res.success = false;
+                res.diagnostic = "VERIFY_ENTRY_FAILED: " + repo.getLastError();
+                nvsStore->close();
+                return res;
+            }
             res.notesMigrated++;
         } else {
             res.success = false;

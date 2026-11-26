@@ -313,6 +313,28 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_text_color(lblJournalTitle_, lv_color_hex(COLOR_HEX_TXT_PRI), 0);
     lv_obj_set_pos(lblJournalTitle_, 6, 2);
 
+    btnJournalClearFilter_ = lv_button_create(screenJournal_);
+    lv_obj_set_size(btnJournalClearFilter_, 64, 20);
+    lv_obj_set_pos(btnJournalClearFilter_, 154, 1);
+    lv_obj_set_style_bg_color(btnJournalClearFilter_, lv_color_hex(COLOR_HEX_CARD), 0);
+    lv_obj_set_style_border_color(btnJournalClearFilter_, lv_color_hex(COLOR_HEX_DUE), 0);
+    lv_obj_set_style_border_width(btnJournalClearFilter_, 1, 0);
+    lv_obj_set_style_radius(btnJournalClearFilter_, 4, 0);
+    lv_obj_set_style_pad_all(btnJournalClearFilter_, 0, 0);
+    lv_obj_remove_flag(btnJournalClearFilter_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btnJournalClearFilter_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(btnJournalClearFilter_, [](lv_event_t* e) {
+        (void)e;
+        if (s_activeUi) {
+            s_activeUi->clearJournalFilter();
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* lblClearFilter = lv_label_create(btnJournalClearFilter_);
+    lv_label_set_text(lblClearFilter, "× Filtre");
+    lv_obj_set_style_text_font(lblClearFilter, &font_french_12, 0);
+    lv_obj_set_style_text_color(lblClearFilter, lv_color_hex(COLOR_HEX_DUE), 0);
+    lv_obj_center(lblClearFilter);
+
     lblJournalSubtitle_ = lv_label_create(screenJournal_);
     lv_label_set_text(lblJournalSubtitle_, "0 entrées");
     lv_obj_set_style_text_font(lblJournalSubtitle_, &font_french_12, 0);
@@ -327,6 +349,15 @@ void JournalUI::buildLvglUi() {
     lv_obj_set_style_pad_all(listJournalContainer_, 2, 0);
     lv_obj_set_scrollbar_mode(listJournalContainer_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(listJournalContainer_, LV_OBJ_FLAG_SCROLLABLE);
+
+    lblJournalEmpty_ = lv_label_create(listJournalContainer_);
+    lv_label_set_text(lblJournalEmpty_, "");
+    lv_obj_set_style_text_font(lblJournalEmpty_, &font_french_14, 0);
+    lv_obj_set_style_text_color(lblJournalEmpty_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
+    lv_label_set_long_mode(lblJournalEmpty_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lblJournalEmpty_, 296);
+    lv_obj_set_pos(lblJournalEmpty_, 6, 48);
+    lv_obj_add_flag(lblJournalEmpty_, LV_OBJ_FLAG_HIDDEN);
 
     // 3 cartes d'entrées réutilisées pour afficher 3 observations visibles simultanément (Section 20)
     journalCardIds_.assign(3, 0);
@@ -647,6 +678,19 @@ void JournalUI::updateHomeWidgets() {
     lv_label_set_text(lblHomeProvider_, aiProviderToDisplayName(view_.provider));
     lv_label_set_text(lblHomeBigCounter_, std::to_string(view_.noteCount).c_str());
 
+    if (lblHomeCounterDesc_) {
+        if (view_.structuredStorageMode && !view_.littleFsMounted) {
+            lv_label_set_text(lblHomeCounterDesc_, "LittleFS indisponible");
+            lv_obj_set_style_text_color(lblHomeCounterDesc_, lv_color_hex(COLOR_HEX_PROBLEM), 0);
+        } else if (view_.structuredStorageMode && !view_.repositoryReady) {
+            lv_label_set_text(lblHomeCounterDesc_, "Journal endommagé");
+            lv_obj_set_style_text_color(lblHomeCounterDesc_, lv_color_hex(COLOR_HEX_PROBLEM), 0);
+        } else {
+            lv_label_set_text(lblHomeCounterDesc_, (view_.noteCount == 1) ? "entrée en mémoire" : "entrées en mémoire");
+            lv_obj_set_style_text_color(lblHomeCounterDesc_, lv_color_hex(COLOR_HEX_TXT_SEC), 0);
+        }
+    }
+
     if (timeService_ && timeService_->isTimeReliable()) {
         lv_label_set_text(lblHomeTime_, timeService_->formatLocalTime().c_str());
     } else {
@@ -678,45 +722,74 @@ void JournalUI::updateHomeWidgets() {
 }
 
 void JournalUI::updateJournalWidgets() {
-    if (!repo_ || journalCardObjs_.empty()) return;
+    if (journalCardObjs_.empty()) return;
 
-    VoiceJournal::EntryFilter filter;
-    filter.projectId = filterProjectId_;
-    filter.type = filterType_;
-    auto ids = repo_->queryEntryIds(filter, 3, 0);
+    const JournalDisplaySnapshot snap = buildJournalSnapshot();
 
-    lv_label_set_text(lblJournalSubtitle_, (std::to_string(repo_->countEntries()) + " entrées").c_str());
+    Serial.println("[VJ][UI] Page=JOURNAL");
+    Serial.printf("[VJ][UI] QueryResults=%u\n", static_cast<unsigned>(snap.queryResultCount));
+    Serial.printf("[VJ][UI] VisibleCards=%u\n", static_cast<unsigned>(snap.visibleCards));
+
+    if (lblJournalTitle_) {
+        lv_label_set_text(lblJournalTitle_, snap.headerTitle.c_str());
+    }
+    if (lblJournalSubtitle_) {
+        lv_label_set_text(lblJournalSubtitle_, snap.subtitle.c_str());
+    }
+    if (btnJournalClearFilter_) {
+        if (snap.filterActive) {
+            lv_obj_remove_flag(btnJournalClearFilter_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(btnJournalClearFilter_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (lblJournalEmpty_) {
+        if (!snap.statusBanner.empty()) {
+            lv_label_set_text(lblJournalEmpty_, snap.statusBanner.c_str());
+            lv_obj_set_style_text_color(
+                lblJournalEmpty_,
+                snap.statusIsError ? lv_color_hex(COLOR_HEX_PROBLEM)
+                                   : (snap.filterActive ? lv_color_hex(COLOR_HEX_DUE)
+                                                        : lv_color_hex(COLOR_HEX_TXT_SEC)),
+                0);
+            lv_obj_remove_flag(lblJournalEmpty_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_label_set_text(lblJournalEmpty_, "");
+            lv_obj_add_flag(lblJournalEmpty_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     for (size_t i = 0; i < journalCardObjs_.size(); i++) {
         lv_obj_t* card = journalCardObjs_[i];
-        if (i < ids.size()) {
-            if (i < journalCardIds_.size()) journalCardIds_[i] = ids[i];
-            lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
-            VoiceJournal::JournalEntry entry;
-            if (repo_->getEntry(ids[i], entry)) {
-                // Trouver le label texte
-                lv_obj_t* lblText = lv_obj_get_child(card, 0);
-                std::string prev = entry.text.substr(0, 34);
-                if (entry.text.size() > 34) prev += "...";
-                if (lblText) lv_label_set_text(lblText, prev.c_str());
+        lv_obj_t* lblText = lv_obj_get_child(card, 0);
+        lv_obj_t* lblMeta = lv_obj_get_child(card, 1);
 
-                // Trouver le label meta
-                lv_obj_t* lblMeta = lv_obj_get_child(card, 1);
-                std::string meta;
-                if (entry.projectId > 0 && projService_) {
-                    VoiceJournal::Project p;
-                    if (projService_->getProject(entry.projectId, p)) {
-                        meta += p.name + " · ";
-                    }
-                }
-                if (timeService_ && entry.createdAt > 0) {
-                    meta += timeService_->formatDisplayDate(entry.createdAt) + " · ";
-                }
-                meta += VoiceJournal::entryTypeToFrench(entry.type);
-                if (lblMeta) lv_label_set_text(lblMeta, meta.c_str());
+        if (i < snap.cards.size() && snap.cards[i].visible) {
+            const auto& cs = snap.cards[i];
+            if (i < journalCardIds_.size()) {
+                journalCardIds_[i] = cs.readError ? 0 : cs.entryId;
+            }
+            lv_obj_remove_flag(card, LV_OBJ_FLAG_HIDDEN);
+            if (lblText) {
+                lv_label_set_text(lblText, cs.text.c_str());
+                lv_obj_set_style_text_color(
+                    lblText,
+                    cs.readError ? lv_color_hex(COLOR_HEX_PROBLEM)
+                                 : lv_color_hex(COLOR_HEX_TXT_PRI),
+                    0);
+            }
+            if (lblMeta) {
+                lv_label_set_text(lblMeta, cs.meta.c_str());
+            }
+            if (cs.readError) {
+                Serial.printf("[VJ][UI] ReadError ID=%u Reason=%s\n",
+                              static_cast<unsigned>(cs.entryId),
+                              cs.errorReason.c_str());
             }
         } else {
             if (i < journalCardIds_.size()) journalCardIds_[i] = 0;
+            if (lblText) lv_label_set_text(lblText, "");
+            if (lblMeta) lv_label_set_text(lblMeta, "");
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
         }
     }
@@ -782,8 +855,8 @@ void JournalUI::updateTasksWidgets() {
             }
 
             lv_obj_t* lblDesc = lv_obj_get_child(card, 1);
-            std::string prev = t.text.substr(0, 28);
-            if (t.text.size() > 28) prev += "...";
+            std::string prev = truncateUtf8Std(t.text, 28);
+            if (prev.size() < t.text.size()) prev += "...";
             if (lblDesc) lv_label_set_text(lblDesc, prev.c_str());
 
             lv_obj_t* lblMeta = lv_obj_get_child(card, 2);
@@ -1009,9 +1082,134 @@ void JournalUI::clearJournalFilter() {
     filterProjectId_ = -1;
     filterType_ = -1;
     filterTitle_ = "";
+    needsRedraw_ = true;
+#ifdef ARDUINO
     if (currentPage_ == UiPage::JOURNAL) {
-        needsRedraw_ = true;
+        updateJournalWidgets();
     }
+#endif
+}
+
+void JournalUI::refreshJournal() {
+    needsRedraw_ = true;
+#ifdef ARDUINO
+    if (currentPage_ == UiPage::JOURNAL) {
+        updateJournalWidgets();
+    }
+#endif
+}
+
+std::string JournalUI::truncateUtf8Std(const std::string& utf8, size_t maxBytes) {
+    if (utf8.size() <= maxBytes) {
+        return utf8;
+    }
+    size_t cut = maxBytes;
+    // Reculer si on coupe au milieu d'une séquence multi-octets UTF-8 (octets de continuation 10xxxxxx)
+    while (cut > 0 && (static_cast<uint8_t>(utf8[cut]) & 0xC0u) == 0x80u) {
+        --cut;
+    }
+    return utf8.substr(0, cut);
+}
+
+JournalDisplaySnapshot JournalUI::buildJournalSnapshot() const {
+    JournalDisplaySnapshot snap;
+    snap.filterActive = hasActiveJournalFilter();
+    snap.headerTitle = (snap.filterActive && filterTitle_.length() > 0)
+                           ? truncateUtf8Std(std::string(filterTitle_.c_str()), 18)
+                           : "Journal";
+    snap.cards.resize(3);
+
+    if (!repo_) {
+        snap.littleFsMounted = false;
+        snap.repositoryReady = false;
+        snap.subtitle = "Indisponible";
+        snap.statusBanner = "Stockage LittleFS indisponible";
+        snap.statusIsError = true;
+        return snap;
+    }
+
+    snap.littleFsMounted = repo_->isFileSystemMounted();
+    snap.repositoryReady = repo_->isInitialized();
+
+    if (!snap.littleFsMounted) {
+        snap.subtitle = "LittleFS OFF";
+        snap.statusBanner = "LittleFS indisponible (non monté)";
+        snap.statusIsError = true;
+        return snap;
+    }
+
+    if (!snap.repositoryReady) {
+        snap.subtitle = "Erreur";
+        std::string err = repo_->getLastError();
+        snap.statusBanner = err.empty() ? "Journal endommagé" : ("Journal endommagé : " + err);
+        snap.statusIsError = true;
+        return snap;
+    }
+
+    snap.totalEntries = repo_->countEntries();
+    snap.subtitle = std::to_string(snap.totalEntries) +
+                    ((snap.totalEntries == 1) ? " entrée" : " entrées");
+
+    VoiceJournal::EntryFilter filter;
+    filter.projectId = filterProjectId_;
+    filter.type = filterType_;
+    const auto ids = repo_->queryEntryIds(filter, 3, 0);
+    snap.queryResultCount = ids.size();
+
+    if (snap.totalEntries == 0) {
+        snap.statusBanner = "Journal vide";
+        snap.statusIsError = false;
+        return snap;
+    }
+
+    if (ids.empty()) {
+        snap.statusBanner = snap.filterActive
+                                ? "Aucun résultat pour ce filtre"
+                                : "Journal vide";
+        snap.statusIsError = false;
+        return snap;
+    }
+
+    for (size_t i = 0; i < snap.cards.size(); ++i) {
+        auto& cs = snap.cards[i];
+        if (i < ids.size()) {
+            cs.entryId = ids[i];
+            cs.visible = true;
+            VoiceJournal::JournalEntry entry;
+            if (repo_->getEntry(ids[i], entry)) {
+                cs.readError = false;
+                std::string prev = truncateUtf8Std(entry.text, 34);
+                if (prev.size() < entry.text.size()) prev += "...";
+                cs.text = prev;
+
+                std::string meta;
+                if (entry.projectId > 0 && projService_) {
+                    VoiceJournal::Project p;
+                    if (projService_->getProject(entry.projectId, p)) {
+                        meta += p.name + " · ";
+                    }
+                }
+                if (timeService_ && entry.createdAt > 0) {
+                    meta += timeService_->formatDisplayDate(entry.createdAt) + " · ";
+                }
+                meta += VoiceJournal::entryTypeToFrench(entry.type);
+                cs.meta = meta;
+                ++snap.visibleCards;
+            } else {
+                cs.readError = true;
+                cs.errorReason = repo_->getLastError();
+                cs.text = "Erreur lecture entrée #" + std::to_string(ids[i]);
+                cs.meta = cs.errorReason.empty() ? "Erreur stockage" : cs.errorReason;
+                ++snap.readErrors;
+                ++snap.visibleCards;
+            }
+        } else {
+            cs.entryId = 0;
+            cs.visible = false;
+        }
+    }
+
+    return snap;
 }
 
 bool JournalUI::isTalkButtonEnabled() const {
