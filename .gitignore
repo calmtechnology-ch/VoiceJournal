@@ -8,6 +8,7 @@ include/secrets.h
 
 # Build & Tests natifs
 tests/build/
+tests_data_*/
 *.exe
 *.o
 *.out

@@ -76,6 +76,7 @@ public:
     IFileHandle* open(const char* path, const char* mode) override;
     size_t totalBytes() override { return 16 * 1024 * 1024; }
     size_t usedBytes() override;
+    const std::string& getBaseDir() const { return baseDir_; }
 
 private:
     std::string baseDir_;

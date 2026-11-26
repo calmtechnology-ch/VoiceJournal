@@ -488,6 +488,13 @@ CommandResult CommandRouter::routeIntelligent(const String &rawText,
       res.isExecutable = true;
       return res;
     }
+    if (norm == "quelles sont mes taches" || norm == "affiche mes taches" ||
+        norm == "liste les taches" || norm == "liste mes taches" || norm == "mes taches" ||
+        norm == "quelles taches restent a faire") {
+      res.type = CommandType::LIST_TASKS;
+      res.isExecutable = true;
+      return res;
+    }
     if (norm.startsWith("la tache ") && norm.indexOf("est terminee") != -1) {
       res.type = CommandType::COMPLETE_TASK;
       int start = rawText.indexOf("tache");

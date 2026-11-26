@@ -18,6 +18,12 @@
 #include <cassert>
 #include <cstring>
 
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace VoiceJournal::Tests {
 
 namespace {
@@ -48,9 +54,19 @@ void runSubTest(const char* name, void (*fn)()) {
 }
 
 // Nettoyage préalable d'un dossier de test
-void cleanupTestDir(NativeFileSystem& fs) {
+void cleanupTestDir(NativeFileSystem& fs, bool removeDir = false) {
     fs.remove(JournalRepository::LOG_PATH);
     fs.remove(JournalRepository::TMP_PATH);
+    if (removeDir) {
+        const std::string& dir = fs.getBaseDir();
+        if (!dir.empty() && dir != ".") {
+#if defined(_WIN32)
+            _rmdir(dir.c_str());
+#else
+            rmdir(dir.c_str());
+#endif
+        }
+    }
 }
 
 // 1. Tests JournalRepository
@@ -415,6 +431,18 @@ V030Report runV030StructuredMemorySuite() {
     runSubTest("CommandRouter: intentions structurees v0.3.0 actives", test_command_router_v030);
 
     std::printf("\nTotal v0.3.0 Tests : %d PASS, %d FAIL\n", s_v030Passed, s_v030Failed);
+
+    static const char* const s_dirs[] = {
+        "tests_data_repo", "tests_data_powercut", "tests_data_compact", "tests_data_migration",
+        "tests_data_proj", "tests_data_tasks", "tests_data_search", "tests_data_analysis"
+    };
+    for (const char* d : s_dirs) {
+#if defined(_WIN32)
+        _rmdir(d);
+#else
+        rmdir(d);
+#endif
+    }
 
     V030Report report;
     report.passed = static_cast<size_t>(s_v030Passed);
