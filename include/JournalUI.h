@@ -290,12 +290,16 @@ private:
 
     void buildLvglUi();
     void updateHomeWidgets();
+    void updateHomeClockIfNeeded();
     void updateJournalWidgets();
     void updateProjectsWidgets();
     void updateTasksWidgets();
     void updateDetailWidgets();
     void updateVoiceBanner();
     void updateNavBar();
+
+    std::string lastDisplayedTime_;
+    uint32_t lastClockCheckMs_ = 0;
 
     static void lvglFlushCallback(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map);
     static void lvglTouchReadCallback(lv_indev_t* indev, lv_indev_data_t* data);

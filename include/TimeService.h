@@ -73,7 +73,9 @@ private:
     bool ntpSynced_ = false;
     int64_t mockTime_ = -1;
     uint32_t lastNtpCheckMs_ = 0;
+    uint32_t lastRtcSyncMs_ = 0;
 
+    bool ensureTimezone() const;
     void syncRtcToSystem();
     void syncSystemToRtc();
 };

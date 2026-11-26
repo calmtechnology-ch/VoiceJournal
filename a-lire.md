@@ -1,3 +1,5 @@
+> vous souhaitez préparer le commit Git.
+
 cd VoiceJournal_CoreS3
 pio run -e m5stack-cores3 -t upload
 

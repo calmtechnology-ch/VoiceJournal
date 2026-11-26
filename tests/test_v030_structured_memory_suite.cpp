@@ -328,9 +328,21 @@ void test_search_service() {
 // 6. Tests TimeService (Zurich, DST, dates relatives)
 void test_time_service_relative_dates() {
     TimeService ts;
-    // 25 novembre 2026 14:30:00 UTC = 1795617000
+    ts.begin(false);
+    // 25 novembre 2026 14:30:00 UTC = 1795617000 -> 15:30 heure suisse (CET, UTC+1)
     ts.setMockTime(1795617000);
     EXPECT_TRUE(ts.isTimeReliable());
+    EXPECT_EQ(ts.formatLocalTime(), "15:30");
+
+    // Simuler une réinitialisation de TZ en UTC (comme VoiceKit::WiFiManager::configTime(0, 0, ...))
+#if defined(_WIN32)
+    _putenv("TZ=UTC0");
+    _tzset();
+#else
+    setenv("TZ", "UTC0", 1);
+    tzset();
+#endif
+    EXPECT_EQ(ts.formatLocalTime(), "15:30");
 
     DateRange today = ts.parseRelativeDateFrench("aujourd'hui");
     EXPECT_TRUE(today.isValid);

@@ -19,38 +19,52 @@ namespace VoiceJournal {
 
 TimeService::TimeService() = default;
 
-void TimeService::begin(bool startNtp) {
+bool TimeService::ensureTimezone() const {
+    const char* currentTz = std::getenv("TZ");
+    if (currentTz && std::strcmp(currentTz, TZ_ZURICH) == 0) {
+        return false;
+    }
 #if defined(_WIN32)
     _putenv("TZ=CET-1CEST,M3.5.0,M10.5.0/3");
     _tzset();
-#elif defined(ARDUINO)
+#else
     setenv("TZ", TZ_ZURICH, 1);
     tzset();
+#endif
+    return true;
+}
+
+void TimeService::begin(bool startNtp) {
+    ensureTimezone();
+#if defined(ARDUINO)
     if (startNtp) {
         configTzTime(TZ_ZURICH, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
         ntpStarted_ = true;
     }
     syncRtcToSystem();
 #else
-    setenv("TZ", TZ_ZURICH, 1);
-    tzset();
+    (void)startNtp;
 #endif
 }
 
 void TimeService::update() {
 #ifdef ARDUINO
-    uint32_t nowMs = millis();
-    if (!ntpSynced_ && (nowMs - lastNtpCheckMs_ > 5000)) {
+    // VoiceKit appelle configTime(0, 0, ...) lors de la connexion/reconnexion Wi-Fi,
+    // ce qui réinitialise TZ à UTC0. Réappliquer immédiatement Europe/Zurich.
+    const bool tzRestored = ensureTimezone();
+    const uint32_t nowMs = millis();
+
+    if (tzRestored || !ntpSynced_ || (nowMs - lastNtpCheckMs_ >= 5000)) {
         lastNtpCheckMs_ = nowMs;
         time_t now = 0;
         std::time(&now);
         // Année 2024 = ~1704067200 (heure synchronisée par VoiceKit ou SNTP)
         if (now > 1704067200) {
-            // Réappliquer le fuseau Europe/Zurich (VoiceKit appelle configTime(0, 0, ...) en UTC)
-            setenv("TZ", TZ_ZURICH, 1);
-            tzset();
-            ntpSynced_ = true;
-            syncSystemToRtc();
+            if (!ntpSynced_ || tzRestored || (nowMs - lastRtcSyncMs_ >= 60000)) {
+                ntpSynced_ = true;
+                lastRtcSyncMs_ = nowMs;
+                syncSystemToRtc();
+            }
         }
     }
 #endif
@@ -58,16 +72,18 @@ void TimeService::update() {
 
 void TimeService::syncRtcToSystem() {
 #ifdef ARDUINO
+    ensureTimezone();
     if (M5.Rtc.isEnabled()) {
         auto dt = M5.Rtc.getDateTime();
         struct tm tmVal;
         std::memset(&tmVal, 0, sizeof(tmVal));
-        tmVal.tm_year = dt.date.year - 1900;
-        tmVal.tm_mon  = dt.date.month - 1;
-        tmVal.tm_mday = dt.date.date;
-        tmVal.tm_hour = dt.time.hours;
-        tmVal.tm_min  = dt.time.minutes;
-        tmVal.tm_sec  = dt.time.seconds;
+        tmVal.tm_year  = dt.date.year - 1900;
+        tmVal.tm_mon   = dt.date.month - 1;
+        tmVal.tm_mday  = dt.date.date;
+        tmVal.tm_hour  = dt.time.hours;
+        tmVal.tm_min   = dt.time.minutes;
+        tmVal.tm_sec   = dt.time.seconds;
+        tmVal.tm_isdst = -1; // Laisser mktime déterminer CET/CEST automatiquement
 
         time_t t = mktime(&tmVal);
         if (t > 1704067200) {
@@ -80,16 +96,17 @@ void TimeService::syncRtcToSystem() {
 
 void TimeService::syncSystemToRtc() {
 #ifdef ARDUINO
+    ensureTimezone();
     if (M5.Rtc.isEnabled()) {
         time_t now = 0;
         std::time(&now);
         struct tm* tmVal = localtime(&now);
         if (tmVal) {
             m5::rtc_datetime_t dt;
-            dt.date.year  = tmVal->tm_year + 1900;
-            dt.date.month = tmVal->tm_mon + 1;
-            dt.date.date  = tmVal->tm_mday;
-            dt.time.hours = tmVal->tm_hour;
+            dt.date.year    = tmVal->tm_year + 1900;
+            dt.date.month   = tmVal->tm_mon + 1;
+            dt.date.date    = tmVal->tm_mday;
+            dt.time.hours   = tmVal->tm_hour;
             dt.time.minutes = tmVal->tm_min;
             dt.time.seconds = tmVal->tm_sec;
             M5.Rtc.setDateTime(dt);
@@ -114,6 +131,7 @@ int64_t TimeService::getCurrentUtc() const {
 }
 
 std::string TimeService::formatLocalTime(int64_t utcEpoch) const {
+    ensureTimezone();
     if (utcEpoch == 0) {
         utcEpoch = getCurrentUtc();
     }
@@ -129,6 +147,7 @@ std::string TimeService::formatLocalTime(int64_t utcEpoch) const {
 }
 
 std::string TimeService::formatDisplayDate(int64_t utcEpoch) const {
+    ensureTimezone();
     if (utcEpoch == 0) return "Inconnue";
 
     int64_t nowUtc = getCurrentUtc();
@@ -172,6 +191,7 @@ std::string TimeService::formatDisplayDate(int64_t utcEpoch) const {
 }
 
 std::string TimeService::formatIso8601Zurich(int64_t utcEpoch) const {
+    ensureTimezone();
     if (utcEpoch == 0) return "";
     time_t t = static_cast<time_t>(utcEpoch);
     struct tm* tmVal = std::localtime(&t);
@@ -193,6 +213,7 @@ std::string TimeService::formatIso8601Zurich(int64_t utcEpoch) const {
 }
 
 DateRange TimeService::parseRelativeDateFrench(const std::string& expr) const {
+    ensureTimezone();
     DateRange r;
     int64_t nowUtc = getCurrentUtc();
     if (nowUtc == 0) return r; // Heure non fiable

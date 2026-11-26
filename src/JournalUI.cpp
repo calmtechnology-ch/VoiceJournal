@@ -692,10 +692,12 @@ void JournalUI::updateHomeWidgets() {
     }
 
     if (timeService_ && timeService_->isTimeReliable()) {
-        lv_label_set_text(lblHomeTime_, timeService_->formatLocalTime().c_str());
+        lastDisplayedTime_ = timeService_->formatLocalTime();
     } else {
-        lv_label_set_text(lblHomeTime_, "--:--");
+        lastDisplayedTime_ = "--:--";
     }
+    lv_label_set_text(lblHomeTime_, lastDisplayedTime_.c_str());
+    lastClockCheckMs_ = millis();
 
     if (projService_ && projService_->getCurrentProjectId() > 0) {
         std::string pName = "[" + projService_->getCurrentProjectName() + "]";
@@ -718,6 +720,22 @@ void JournalUI::updateHomeWidgets() {
     } else {
         lv_label_set_text(lblHomeTalk_, "PARLER");
         lv_obj_set_style_bg_color(btnHomeTalk_, lv_color_hex(COLOR_HEX_ACTION), 0);
+    }
+}
+
+void JournalUI::updateHomeClockIfNeeded() {
+    if (currentPage_ != UiPage::HOME || !lblHomeTime_) return;
+
+    const uint32_t nowMs = millis();
+    if (nowMs - lastClockCheckMs_ < 1000) return;
+    lastClockCheckMs_ = nowMs;
+
+    std::string currentTime = (timeService_ && timeService_->isTimeReliable())
+                                  ? timeService_->formatLocalTime()
+                                  : std::string("--:--");
+    if (currentTime != lastDisplayedTime_) {
+        lastDisplayedTime_ = currentTime;
+        lv_label_set_text(lblHomeTime_, lastDisplayedTime_.c_str());
     }
 }
 
@@ -1014,6 +1032,8 @@ void JournalUI::renderIfNeeded() {
         updateVoiceBanner();
         updateNavBar();
         needsRedraw_ = false;
+    } else {
+        updateHomeClockIfNeeded();
     }
     lv_timer_handler();
 #else
